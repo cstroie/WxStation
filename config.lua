@@ -1,29 +1,36 @@
 -- Main configuration
+CFG = {}
 
--- Device name
-NODENAME = "NodeMCU"
+-- Global device data
+NODENAME = "NodeMCU"  -- device name
+TZ = 0                -- timezone
+ALT = 0               -- altitude
+I2C_SDA = 3           -- i2c sda pin
+I2C_SCL = 4           -- i2c scl pin
 
 -- WiFi
-wl_ap = {}
-wl_ap["ssid"] = "pass"
-wl_tries = 20
+CFG.WL = {}
+CFG.WL.tries = 20
+CFG.WL.AP = {}
+CFG.WL.AP["ssid"] = "pass"
 
 -- NTP server
-ntp_server = "0.europe.pool.ntp.org"
-ntp_interval = "765"
-timezone = 2
+CFG.NTP = {}
+CFG.NTP.server = "0.europe.pool.ntp.org"
+CFG.NTP.interval = 765
 
 -- Weather
-ALTITUDE = 83
-i2c_sda = 3
-i2c_scl = 4
-wx_interval = "60"
+CFG.WX = {}
+CFG.WX.interval = 60
 
 -- IoT MQTT
-iot_server = "mqtt.example.com"
-iot_port = 1883
-iot_id = "MQTT_ID"
-iot_user = "MQTT_USER"
-iot_pass = "MQTT_PASS"
+CFG.IOT = {}
+CFG.IOT.server = "mqtt.example.com"
+CFG.IOT.port = 1883
+CFG.IOT.ssl = 0
+CFG.IOT.auto = 1
+CFG.IOT.id = "MQTT_ID"
+CFG.IOT.user = "MQTT_USER"
+CFG.IOT.pass = "MQTT_PASS"
 
 -- vim: set ft=lua ai ts=2 sts=2 et sw=2 sta nowrap nu :

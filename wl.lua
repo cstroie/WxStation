@@ -5,7 +5,7 @@ ntp = require("ntp")
 iot = require("iot")
 
 local wl = {}
-wl.check_counter = wl_tries
+wl.try = CFG.WL.tries
 wl.status = {"Idle", "Connecting", "Wrong password", "AP not found", "Failed", "Connected"}
 
 function wl:show()
@@ -33,7 +33,7 @@ function wl.scan(lst)
   for ssid, v in pairs(lst) do
     authmode, rssi, bssid, channel = string.match(v, "(%d),(-?%d+),(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x),(%d+)")
     debug("  " .. ssid .. " (" .. rssi .. " dBm" .. ")")
-    if wl_ap[ssid] then ap = ssid end
+    if CFG.WL.AP[ssid] then ap = ssid end
   end
   if ap then
     wl:connect(ap)
@@ -46,18 +46,19 @@ end
 function wl:check()
   -- Check the WiFi connectivity and try to identify an AP
   if wifi.sta.status() ~= 5 then
-    if wl.check_counter > 0 then
-      debug(string.format("WiFi wait... % 3d", wl.check_counter), wl.status[wifi.sta.status()])
-      wl.check_counter = wl.check_counter - 1
+    if wl.try > 0 then
+      debug(string.format("WiFi wait... % 3d", wl.try), wl.status[wifi.sta.status()])
+      wl.try = wl.try - 1
       tmr.start(1)
     else
       debug("WiFi scanning...", "")
-      wl.check_counter = wl_tries
+      wl.try = CFG.WL.tries
       wifi.setmode(wifi.STATION)
+      -- TODO self
       wifi.sta.getap(wl.scan)
     end
   else
-    wl.check_counter = wl_tries
+    wl.try = CFG.WL.tries
     wl:show()
     ntp:sync()
     iot:connect()
