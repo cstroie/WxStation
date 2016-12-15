@@ -11,8 +11,8 @@ if adc.force_init_mode(adc.INIT_VDD33) then node.restart() end
 ntp = require("ntp")
 ntp:init()
 -- Weather data
-weather = require("weather")
-weather:init()
+wx = require("wx")
+wx:init()
 -- IoT
 iot = require("iot")
 iot:init()

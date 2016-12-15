@@ -17,7 +17,7 @@ timezone = 2
 ALTITUDE = 83
 i2c_sda = 3
 i2c_scl = 4
-weather_interval = "60"
+wx_interval = "60"
 
 -- IoT MQTT
 iot_server = "mqtt.example.com"
