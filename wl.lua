@@ -23,7 +23,7 @@ end
 function wl:connect(ssid)
   -- Try to connect and start the watchdog
   debug("WiFi connecting to " .. ssid)
-  wifi.sta.config(ssid, wl_ap[ssid])
+  wifi.sta.config(ssid, CFG.WL.AP[ssid])
   tmr.start(1)
 end
 

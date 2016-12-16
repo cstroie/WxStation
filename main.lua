@@ -24,6 +24,6 @@ iot:init()
 wl = require("wl")
 
 -- Global debug flag
-DEBUG = false
+--DEBUG = false
 
 -- vim: set ft=lua ai ts=2 sts=2 et sw=2 sta nowrap nu :

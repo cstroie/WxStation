@@ -52,7 +52,7 @@ function wx:pub()
   iot:mpub({vdd = adc.readvdd33(),
             heap = node.heap(),
             uptime = tmr.time()},
-            0, 0, "report/" .. NODENAME)
+            0, 0, "report/" .. NODENAME:lower())
 end
 
 function wx:init()

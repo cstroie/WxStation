@@ -9,7 +9,10 @@ function ntp:sync()
   if wifi.sta.status() == 5 then
     sntp.sync(CFG.NTP.server,
     function(sec, usec, server)
-      debug("Time sync to " .. server .. ": " .. sec)
+      local tm = rtctime.epoch2cal(sec + TZ * 3600)
+      debug("Time sync to " .. server .. ": " .. string.format("%04d.%02d.%02d %02d:%02d:%02d",
+                                                               tm["year"], tm["mon"], tm["day"],
+                                                               tm["hour"], tm["min"], tm["sec"]))
     end,
     function(errcode)
       debug("Time sync failed: " .. errcode)

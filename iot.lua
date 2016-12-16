@@ -11,6 +11,24 @@ function iot:init()
   self.client:on("connect", function(client)
     debug("IoT connected")
     self.connected = true
+    self.client:subscribe({["command/#"] = 1})
+    local ssid = wifi.sta.getconfig()
+    local ip, nm, gw = wifi.sta.getip()
+    local topmsg = {hostname = wifi.sta.gethostname(),
+                    mac = wifi.sta.getmac(),
+                    ssid = ssid,
+                    rssi = wifi.sta.getrssi(),
+                    ip = ip,
+                    gw = gw}
+    self:mpub({wifi = topmsg}, 1, 1, "report/" .. NODENAME:lower())
+    local sec, usec = rtctime.get()
+    if sec ~= 0 then
+      local tm = rtctime.epoch2cal(sec + TZ * 3600)
+      local ts = string.format("%04d.%02d.%02d %02d:%02d:%02d",
+                                tm["year"], tm["mon"], tm["day"],
+                                tm["hour"], tm["min"], tm["sec"])
+      self:pub("report/" .. NODENAME:lower() .. "/time", ts, 1, 1)
+    end
   end)
   self.client:on("offline", function(client)
     debug("IoT offline")
@@ -21,7 +39,7 @@ function iot:init()
       debug("IoT " .. topic .. ": " .. msg)
       local root, trunk, branch = string.match(topic, '^([^/]+)/([^/]+)/([^/]+)')
       if root == "command" then
-        if trunk == NODENAME then
+        if trunk:lower() == NODENAME:lower() then
           if branch == "restart" then
             node.restart()
           elseif branch == "debug" then
@@ -45,17 +63,6 @@ function iot:connect()
     function(client)
       debug("IoT initial connection")
       self.connected = true
-      self.client:subscribe({["command/#"] = 1})
-      local ssid = wifi.sta.getconfig()
-      local ip, nm, gw = wifi.sta.getip()
-      local topmsg = {hostname = wifi.sta.gethostname(),
-                      mac = wifi.sta.getmac(),
-                      ssid = ssid,
-                      rssi = wifi.sta.getrssi(),
-                      ip = ip,
-                      gw = gw}
-      local sec, usec = rtctime.get()
-      self:mpub({wifi = topmsg, time = sec}, 1, 1, "report/" .. NODENAME)
     end,
     function(client, reason)
       debug("IoT failed: " .. reason)
