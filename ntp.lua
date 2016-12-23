@@ -6,7 +6,7 @@ local ntp = {}
 
 function ntp:sync()
   -- Time sync using the specified server, then the gateway
-  if wifi.sta.status() == 5 then
+  if wifi.sta.status() == wifi.STA_GOTIP then
     sntp.sync(CFG.NTP.server,
     function(sec, usec, server)
       local tm = rtctime.epoch2cal(sec + TZ * 3600)

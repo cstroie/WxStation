@@ -45,7 +45,7 @@ function iot:init()
           elseif branch == "debug" then
             DEBUG = (msg == "on") and true or false
           elseif branch == "timezone" then
-            timezone = msg
+            TZ = tonumber(msg)
           elseif branch == "ntpsync" then
             local server = msg and msg or CFG.NTP.server
             sntp.sync(server)
@@ -57,7 +57,7 @@ function iot:init()
 end
 
 function iot:connect()
-  if wifi.sta.status() == 5 then
+  if wifi.sta.status() == wifi.STA_GOTIP then
     self.client:close()
     self.client:connect(CFG.IOT.server, CFG.IOT.port, CFG.IOT.ssl, CFG.IOT.auto,
     function(client)
@@ -77,12 +77,14 @@ function iot:pub(topic, msg, qos, ret)
   -- Publish the message to a topic
   if not self.connected then
     self:connect()
-  elseif wifi.sta.status() == 5 then
+  elseif wifi.sta.status() == wifi.STA_GOTIP then
     qos = qos and qos or 0
     ret = ret and ret or 0
     msg = msg or ""
     debug("IoT publish: " .. topic .. ": ", msg)
     self.client:publish(topic, msg, qos, ret)
+  else
+    self.connected = false
   end
 end
 
@@ -90,7 +92,7 @@ function iot:mpub(topmsg, qos, ret, btop)
   -- Publish the messages to their topics
   if not self.connected then
     self:connect()
-  elseif wifi.sta.status() == 5 then
+  elseif wifi.sta.status() == wifi.STA_GOTIP then
     qos = qos and qos or 0
     ret = ret and ret or 0
     btop = btop:sub(#btop,#btop) ~= "/" and btop .. "/" or btop
@@ -103,6 +105,8 @@ function iot:mpub(topmsg, qos, ret, btop)
         self.client:publish(btop .. topic, msg, qos, ret)
       end
     end
+  else
+    self.connected = false
   end
 end
 
