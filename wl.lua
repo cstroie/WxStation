@@ -45,7 +45,7 @@ end
 
 function wl:check()
   -- Check the WiFi connectivity and try to identify an AP
-  if wifi.sta.status() ~= 5 then
+  if wifi.sta.status() ~= wifi.STA_GOTIP then
     if wl.try > 0 then
       debug(string.format("WiFi wait... % 3d", wl.try), wl.status[wifi.sta.status()])
       wl.try = wl.try - 1
