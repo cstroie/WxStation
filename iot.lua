@@ -11,7 +11,7 @@ function iot:init()
   self.client:on("connect", function(client)
     debug("IoT connected")
     self.connected = true
-    self.client:subscribe({["command/#"] = 1})
+    self.client:subscribe({["command/" .. NODENAME:lower() .. "/#"] = 1})
     local ssid = wifi.sta.getconfig()
     local ip, nm, gw = wifi.sta.getip()
     local topmsg = {hostname = wifi.sta.gethostname(),
