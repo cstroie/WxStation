@@ -3,7 +3,7 @@
 require("config")
 iot = require("iot")
 
-local wx = {TMP=nil, DEW=nil, HMD=nil, QFE=nil, QNH=nil, LUX=nil}
+local wx = {TMP=nil, DEW=nil, HMD=nil, QFE=nil, QNH=nil, LUX=nil, LVS=nil, LIR=nil}
 
 function int2float(x, pr)
   -- Convert integer to "float" with specified precision
@@ -33,6 +33,7 @@ function wx:read()
   if tsl2561.init(I2C_SDA, I2C_SCL) == tsl2561.TSL2561_OK then
     tslsts = true
     self.LUX = tsl2561.getlux()
+    self.LVS, self.LIR = tsl2561.getrawchannels()
   end
   return bmests and tslsts
 end
@@ -46,11 +47,14 @@ function wx:pub()
               dewpoint = int2float(self.DEW, 2),
               pressure = int2float(self.QFE, 3),
               sealevel = int2float(self.QNH, 3),
-              illuminance = self.LUX},
+              illuminance = self.LUX,
+              visible = self.LVS,
+              infrared = self.LIR},
               0, 0, "sensor/outdoor/")
   end
   iot:mpub({vdd = adc.readvdd33(),
             heap = node.heap(),
+            rssi = wifi.sta.getrssi(),
             uptime = tmr.time()},
             0, 0, "report/" .. NODENAME:lower())
 end
