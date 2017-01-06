@@ -36,7 +36,7 @@ function wl.scan(lst)
     if CFG.WL.AP[ssid] then ap = ssid end
   end
   if ap then
-    wl:connect(ap)
+    self:connect(ap)
   else
     debug("No known WiFi.")
     -- TODO SoftAP mode
@@ -46,20 +46,20 @@ end
 function wl:check()
   -- Check the WiFi connectivity and try to identify an AP
   if wifi.sta.status() ~= wifi.STA_GOTIP then
-    if wl.try > 0 then
-      debug(string.format("WiFi wait... % 3d", wl.try), wl.status[wifi.sta.status()])
-      wl.try = wl.try - 1
+    if self.try > 0 then
+      debug(string.format("WiFi wait... % 3d", self.try), self.status[wifi.sta.status()])
+      self.try = self.try - 1
       tmr.start(1)
     else
       debug("WiFi scanning...", "")
-      wl.try = CFG.WL.tries
+      self.try = CFG.WL.tries
       wifi.setmode(wifi.STATION)
       -- TODO self
       wifi.sta.getap(wl.scan)
     end
   else
-    wl.try = CFG.WL.tries
-    wl:show()
+    self.try = CFG.WL.tries
+    self:show()
     ntp:sync()
     iot:connect()
   end
