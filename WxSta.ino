@@ -19,7 +19,7 @@
   WxSta.  If not, see <http://www.gnu.org/licenses/>.
 
 
-  WiFi connected weather station, reading the athmospheric sensor BME280 and 
+  WiFi connected weather station, reading the athmospheric sensor BME280 and
   the illuminance sensor TSL2561 and publishing the measured data along with
   various local telemetry.
 */
@@ -51,6 +51,10 @@
 String NODENAME = "WxSta";
 String LC_NODENAME = "wxsta";  // FIXME DNRY
 
+// Altitude
+const int ALTI = 83; // meters
+double ALTI_CORR = pow((double)(1.0 - 2.25577e-5 * ALTI), (double)(-5.25588));
+
 // NTP
 const int  TZ = 2;
 const char NTP_SERVER[] = "europe.pool.ntp.org";
@@ -76,6 +80,7 @@ const int SNS_INTERVAL  = 60 * 1000;
 BME280 atmo;
 bool atmo_ok = false;
 SFE_TSL2561 light;
+bool light_ok = false;
 boolean gain = false;
 unsigned char shtr = 2;
 unsigned int ms;
@@ -125,7 +130,7 @@ boolean mqttReconnect() {
     // Subscribe
     MQTT_Client.subscribe(String(MQTT_CMD + "#").c_str());
     // TODO
-    MQTT_Client.subscribe("sensor/#");
+    //MQTT_Client.subscribe("sensor/#");
     Serial.print(F("MQTT connected to "));
     Serial.println(MQTT_SERVER);
   }
@@ -229,13 +234,8 @@ void setup() {
   atmo.settings.tempOverSample = 1;
   atmo.settings.pressOverSample = 1;
   atmo.settings.humidOverSample = 1;
-  Serial.print("Starting BME280... result of .begin(): 0x");
   delay(10);
-  Serial.println(atmo.begin(), HEX);
-  Serial.println("BME280 ID, reset and ctrl regs");
-  Serial.print("  ID(0xD0): 0x");
-  Serial.println(atmo.readRegister(BME280_CHIP_ID_REG), HEX);
-  if (atmo.readRegister(BME280_CHIP_ID_REG) == 0x60) {
+  if (atmo.begin() == 0x60) {
     atmo_ok = true;
     Serial.println("BME280 sensor detected.");
   }
@@ -243,12 +243,20 @@ void setup() {
     atmo_ok = false;
     Serial.println("BME280 sensor missing.");
   }
-  Serial.println();
 
   // TSL2561
   light.begin();
-  light.setTiming(gain, shtr, ms);
-  light.setPowerUp();
+  unsigned char ID;
+  if (light.getID(ID)) {
+    light.setTiming(gain, shtr, ms);
+    light.setPowerUp();
+    light_ok = true;
+    Serial.println("TSL2561 sensor detected.");
+  }
+  else {
+    light_ok = false;
+    Serial.println("TSL2561 sensor missing.");
+  }
 
   // Sensor timer
   delaySNS.start(SNS_INTERVAL, AsyncDelay::MILLIS);
@@ -272,6 +280,7 @@ void loop() {
     if (atmo_ok) {
       float temp = atmo.readTempC();
       float pres = atmo.readFloatPressure();
+      float seal = pres * ALTI_CORR;
       float hmdt = atmo.readFloatHumidity();
       float dewp = 243.04 * (log(hmdt / 100.0) + ((17.625 * temp) / (243.04 + temp))) / (17.625 - log(hmdt / 100.0) - ((17.625 * temp) / (243.04 + temp)));
 
@@ -281,8 +290,10 @@ void loop() {
       MQTT_Client.publish(String(MQTT_SENSOR + "/humidity").c_str(), text);
       dtostrf(dewp, 7, 2, text);
       MQTT_Client.publish(String(MQTT_SENSOR + "/dewpoint").c_str(), text);
-      dtostrf(pres, 7, 2, text);
+      dtostrf(pres / 100, 7, 2, text);
       MQTT_Client.publish(String(MQTT_SENSOR + "/pressure").c_str(), text);
+      dtostrf(seal / 100, 7, 2, text);
+      MQTT_Client.publish(String(MQTT_SENSOR + "/sealevel").c_str(), text);
     }
 
     // Read TSL2561
