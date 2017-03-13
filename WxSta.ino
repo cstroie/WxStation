@@ -274,7 +274,7 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
   FW0690>APRS,TCPIP*:T#517,173,062,213,002,000,00000000
 
 */
-void aprsSendTelemetry(int vcc, int rssi, int heap, unsigned int luxVis, unsigned int luxIrd) {
+void aprsSendTelemetry(int vcc, int rssi, int heap, unsigned int luxVis, unsigned int luxIrd, byte bits) {
   // Increment the telemetry sequence, reset it if exceeds 999
   aprsSeq += 1;
   if (aprsSeq > 999) {
@@ -288,9 +288,9 @@ void aprsSendTelemetry(int vcc, int rssi, int heap, unsigned int luxVis, unsigne
   // Compose the APRS packet
   String pkt = APRS_CALLSIGN;
   pkt = pkt + ">APRS,TCPIP*:";
-  char text[35] = "";
-  sprintf(text, "T#%03d,%03d,%03d,%03d,%03d,%03d,00000000", aprsSeq, (vcc - 2500) / 4, -rssi, heap / 200, luxVis / 256, luxIrd / 256);
-  pkt = pkt + text;
+  char text[27] = "";
+  sprintf(text, "T#%03d,%03d,%03d,%03d,%03d,%03d,", aprsSeq, (vcc - 2500) / 4, -rssi, heap / 200, luxVis / 256, luxIrd / 256);
+  pkt = pkt + text + String(bits, BIN);
   // Send the packet
   APRS_Client.println(pkt);
 #if defined(DEBUG)
@@ -470,7 +470,7 @@ void loop() {
       if (APRS_Client.connect(APRS_SERVER, APRS_PORT)) {
         aprsAuthenticate();
         aprsSendWeather(temp, hmdt, seal, lux);
-        aprsSendTelemetry(vcc, rssi, heap, luxVis, luxIrd);
+        aprsSendTelemetry(vcc, rssi, heap, luxVis, luxIrd, 0);
         APRS_Client.stop();
       };
     }
