@@ -230,6 +230,17 @@ void wifiCallback (WiFiManager *wifiMgr) {
   Serial.println(strMsg);
 }
 
+String aprsTime() {
+  unsigned long rawTime = NTP_Client.getEpochTime();
+  unsigned long hours = (rawTime % 86400L) / 3600;
+  String hoursStr = hours < 10 ? "0" + String(hours) : String(hours);
+  unsigned long minutes = (rawTime % 3600) / 60;
+  String minuteStr = minutes < 10 ? "0" + String(minutes) : String(minutes);
+  unsigned long seconds = rawTime % 60;
+  String secondStr = seconds < 10 ? "0" + String(seconds) : String(seconds);
+  return hoursStr + minuteStr + secondStr;
+}
+
 /**
   Send APRS authentication data
   user FW0690 pass -1 vers WxSta 0.2"
@@ -254,7 +265,7 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
   // Compose the APRS packet
   String pkt = APRS_CALLSIGN;
   pkt = pkt + ">APRS,TCPIP*:";
-  pkt = pkt + "@" + NTP_Client.getFormattedTime() + "h";
+  pkt = pkt + "@" + aprsTime() + "h";
   pkt = pkt + APRS_LOCATION;
   // Wind
   pkt = pkt + "_.../...g...";
@@ -273,12 +284,12 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
   }
   // Athmospheric pressure
   char txtPres[6] = "";
-  sprintf(txtPres, "%05d", (int)pres * 10);
+  sprintf(txtPres, "%05d", (int)(pres / 10));
   pkt = pkt + "b" + txtPres;
   // Illuminance, if valid
   if (lux >= 0) {
     char txtLux[4] = "";
-    sprintf(txtLux, "%03d", (int)lux * 0.0079);
+    sprintf(txtLux, "%03d", (int)(lux * 0.0079));
     pkt = pkt + "L" + txtLux;
   }
   // Comment (device name)
@@ -376,6 +387,7 @@ void setup() {
 
   // Start the NTP client
   NTP_Client.begin();
+  NTP_Client.forceUpdate();
 
   // Start the MQTT client
   MQTT_Client.setServer(MQTT_SERVER, MQTT_PORT);
