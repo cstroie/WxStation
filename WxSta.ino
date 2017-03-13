@@ -48,6 +48,7 @@
 
 
 // Device name
+String VERSION = "0.3";
 String NODENAME = "WxSta";
 String LC_NODENAME = "wxsta";  // FIXME DNRY
 
@@ -74,6 +75,17 @@ String MQTT_SENSOR = "sensor/outdoor"; // + LC_NODENAME;
 WiFiClient WiFi_Client;
 PubSubClient MQTT_Client(WiFi_Client);
 AsyncDelay delayMQTT;
+
+// APRS parameters
+const char APRS_SERVER[] = "cwop5.aprs.net";
+const int  APRS_PORT = 14580;
+const char APRS_CALLSIGN[] = "FW0690";
+const int  APRS_PASSCODE = -1;
+const char APRS_LOCATION[] = "4427.67N/02608.03E";
+const int  APRS_SNS_MAX = 5; // x SNS_INTERVAL
+int APRS_SNS_COUNT = 0;
+unsigned int aprsSeq = 0;
+WiFiClient APRS_Client;
 
 // Sensors
 const int SNS_INTERVAL  = 60 * 1000;
@@ -190,6 +202,83 @@ void wifiCallback (WiFiManager *wifiMgr) {
   Serial.println(strMsg);
 }
 
+/**
+  Send APRS authentication data
+  user FW0690 pass -1 vers WxSta 0.2"
+
+*/
+void aprsAuthenticate() {
+  String pkt = String("user ") + APRS_CALLSIGN + String(" pass ") + APRS_PASSCODE + String(" vers ") + NODENAME + " " + VERSION;
+  APRS_Client.println(pkt);
+}
+
+/**
+  Send APRS weather data
+  FW0690>APRS,TCPIP*:@152457h4427.67N/02608.03E_.../...g...t044h86b10201L001WxSta
+
+*/
+void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
+  // Temperature will be in Fahrenheit
+  float fahr = temp * 9 / 5 + 32;
+  // Compose the APRS packet
+  String pkt = APRS_CALLSIGN;
+  pkt = pkt + ">APRS,TCPIP*:";
+  pkt = pkt + "@" + NTP_Client.getFormattedTime() + "h";
+  pkt = pkt + APRS_LOCATION;
+  // Wind
+  pkt = pkt + "_.../...g...";
+  // Temperature
+  char txtTemp[4] = "";
+  sprintf(txtTemp, "%03d", (int)fahr);
+  pkt = pkt + "t" + txtTemp;
+  // Humidity
+  if (hmdt == 100) {
+    pkt = pkt + "h00";
+  }
+  else {
+    char txtHmdt[3] = "";
+    sprintf(txtHmdt, "%02d", (int)hmdt);
+    pkt = pkt + "h" + txtHmdt;
+  }
+  // Athmospheric pressure
+  char txtPres[6] = "";
+  sprintf(txtPres, "%05d", (int)pres * 10);
+  pkt = pkt + "b" + txtPres;
+  // Illuminance, if valid
+  if (lux >= 0) {
+    char txtLux[4] = "";
+    sprintf(txtLux, "%03d", (int)lux * 0.0079);
+    pkt = pkt + "L" + txtLux;
+  }
+  // Comment (device name)
+  pkt = pkt + NODENAME;
+  // Send the packet
+  APRS_Client.println(pkt);
+}
+
+/**
+  Send APRS telemetry
+  FW0690>APRS,TCPIP*:T#517,173,062,213,002,000,00000000
+
+*/
+void aprsSendTelemetry(int vcc, int rssi, int heap, unsigned int luxVis, unsigned int luxIrd) {
+  // Increment the telemetry sequence, reset to 1 if exceeds 999
+  aprsSeq += 1;
+  if (aprsSeq > 999) {
+    aprsSeq = 1;
+  }
+  // Compose the APRS packet
+  String pkt = APRS_CALLSIGN;
+  pkt = pkt + ">APRS,TCPIP*:";
+
+  char text[35] = "";
+  sprintf(text, "T#%03d,%03d,%03d,%03d,%03d,%03d,00000000", aprsSeq, (vcc - 2500) / 4, -rssi, heap / 200, luxVis / 256, luxIrd / 256);
+  pkt = pkt + text;
+
+  // Send the packet
+  APRS_Client.println(pkt);
+}
+
 void setup() {
   // Init the serial com
   Serial.println();
@@ -258,6 +347,10 @@ void setup() {
     Serial.println("TSL2561 sensor missing.");
   }
 
+  // Initialize the random number generator and set the APRS telemetry start sequence
+  randomSeed(NTP_Client.getEpochTime());
+  aprsSeq = random(1000);
+
   // Sensor timer
   delaySNS.start(SNS_INTERVAL, AsyncDelay::MILLIS);
 }
@@ -274,50 +367,63 @@ void loop() {
 
   // Read the sensors and publish telemetry
   if (delaySNS.isExpired()) {
-    char text[10] = "";
-
-    // Read BME280
-    if (atmo_ok) {
-      float temp = atmo.readTempC();
-      float pres = atmo.readFloatPressure();
-      float seal = pres * ALTI_CORR;
-      float hmdt = atmo.readFloatHumidity();
-      float dewp = 243.04 * (log(hmdt / 100.0) + ((17.625 * temp) / (243.04 + temp))) / (17.625 - log(hmdt / 100.0) - ((17.625 * temp) / (243.04 + temp)));
-
-      dtostrf(temp, 7, 2, text);
-      MQTT_Client.publish(String(MQTT_SENSOR + "/temperature").c_str(), text);
-      dtostrf(hmdt, 7, 2, text);
-      MQTT_Client.publish(String(MQTT_SENSOR + "/humidity").c_str(), text);
-      dtostrf(dewp, 7, 2, text);
-      MQTT_Client.publish(String(MQTT_SENSOR + "/dewpoint").c_str(), text);
-      dtostrf(pres / 100, 7, 2, text);
-      MQTT_Client.publish(String(MQTT_SENSOR + "/pressure").c_str(), text);
-      dtostrf(seal / 100, 7, 2, text);
-      MQTT_Client.publish(String(MQTT_SENSOR + "/sealevel").c_str(), text);
+    // Check if we need to send the APRS data
+    APRS_SNS_COUNT++;
+    if (APRS_SNS_COUNT > APRS_SNS_MAX) {
+      APRS_SNS_COUNT = 1;
     }
 
     // Read TSL2561
-    unsigned int data0, data1;
-    if (light.getData(data0, data1)) {
-      double lux;
-      boolean good = light.getLux(gain, ms, data0, data1, lux);
+    unsigned int luxVis, luxIrd;
+    double lux;
+    if (light.getData(luxVis, luxIrd)) {
+      boolean good = light.getLux(gain, ms, luxVis, luxIrd, lux);
       if (good) {
-        dtostrf(lux, 7, 2, text);
-        MQTT_Client.publish(String(MQTT_SENSOR + "/illuminance").c_str(), text);
-        dtostrf((float)data0, 7, 2, text);
-        MQTT_Client.publish(String(MQTT_SENSOR + "/visible").c_str(), text);
-        dtostrf((float)data1, 7, 2, text);
-        MQTT_Client.publish(String(MQTT_SENSOR + "/infrared").c_str(), text);
+        MQTT_Client.publish(String(MQTT_SENSOR + "/illuminance").c_str(), String(lux, 2).c_str());
+        MQTT_Client.publish(String(MQTT_SENSOR + "/visible").c_str(), String(luxVis).c_str());
+        MQTT_Client.publish(String(MQTT_SENSOR + "/infrared").c_str(), String(luxIrd).c_str());
+      }
+      else {
+        lux = -1;
       }
     }
 
+    // Read BME280
+    float temp, pres, seal, hmdt, dewp;
+    if (atmo_ok) {
+      temp = atmo.readTempC();
+      pres = atmo.readFloatPressure();
+      seal = pres * ALTI_CORR;
+      hmdt = atmo.readFloatHumidity();
+      dewp = 243.04 * (log(hmdt / 100.0) + ((17.625 * temp) / (243.04 + temp))) / (17.625 - log(hmdt / 100.0) - ((17.625 * temp) / (243.04 + temp)));
+
+      MQTT_Client.publish(String(MQTT_SENSOR + "/temperature").c_str(), String(temp, 2).c_str());
+      MQTT_Client.publish(String(MQTT_SENSOR + "/humidity").c_str(), String(hmdt, 2).c_str());
+      MQTT_Client.publish(String(MQTT_SENSOR + "/dewpoint").c_str(), String(dewp, 2).c_str());
+      MQTT_Client.publish(String(MQTT_SENSOR + "/pressure").c_str(), String(pres / 100, 2).c_str());
+      MQTT_Client.publish(String(MQTT_SENSOR + "/sealevel").c_str(), String(seal / 100, 2).c_str());
+    }
+
     // Various telemetry
-    MQTT_Client.publish(String(MQTT_REPORT_WIFI + "/rssi").c_str(), String(WiFi.RSSI()).c_str());
-    MQTT_Client.publish(String(MQTT_REPORT + "/uptime").c_str(), String(millis() / 1000).c_str());
-    MQTT_Client.publish(String(MQTT_REPORT + "/heap").c_str(), String(ESP.getFreeHeap()).c_str());
+    int rssi = WiFi.RSSI();
+    int heap = ESP.getFreeHeap();
     int vcc = ESP.getVcc();
-    MQTT_Client.publish(String(MQTT_REPORT + "/vcc").c_str(), String(String(vcc / 1000) + "." + String(vcc % 1000)).c_str());
-    // Repeat
+    MQTT_Client.publish(String(MQTT_REPORT_WIFI + "/rssi").c_str(), String(rssi).c_str());
+    MQTT_Client.publish(String(MQTT_REPORT + "/uptime").c_str(), String(millis() / 1000).c_str());
+    MQTT_Client.publish(String(MQTT_REPORT + "/heap").c_str(), String(heap).c_str());
+    MQTT_Client.publish(String(MQTT_REPORT + "/vcc").c_str(), String((float)vcc / 1000, 3).c_str());
+
+    // APRS (every 5 minutes)
+    if (APRS_SNS_COUNT == 1) {
+      if (APRS_Client.connect(APRS_SERVER, APRS_PORT)) {
+        aprsAuthenticate();
+        aprsSendWeather(temp, hmdt, seal, lux);
+        aprsSendTelemetry(vcc, rssi, heap, luxVis, luxIrd);
+        APRS_Client.stop();
+      };
+    }
+
+    // Repeat sensor reading
     delaySNS.repeat();
   }
 
