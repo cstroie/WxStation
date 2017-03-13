@@ -24,7 +24,10 @@
   various local telemetry.
 */
 
-// Sensors are connected to I2C
+// The DEBUG flag
+#define DEBUG
+
+// The sensors are connected to I2C
 #define SDA 0
 #define SCL 2
 #include <Wire.h>
@@ -68,7 +71,7 @@ const char MQTT_ID[] = "wxsta-eridu-eu-org";
 const char MQTT_SERVER[] = "eridu.eu.org";
 const int  MQTT_PORT = 1883;
 const int  MQTT_INTERVAL = 5000;
-String MQTT_CMD  = "command/" + LC_NODENAME + "/";
+String MQTT_CMD  = "command/" + LC_NODENAME;
 String MQTT_REPORT = "report/" + LC_NODENAME;
 String MQTT_REPORT_WIFI = MQTT_REPORT + "/wifi";
 String MQTT_SENSOR = "sensor/outdoor"; // + LC_NODENAME;
@@ -140,11 +143,13 @@ boolean mqttReconnect() {
     MQTT_Client.publish(String(MQTT_REPORT_WIFI + "/ip").c_str(), WiFi.localIP().toString().c_str(), true);
     MQTT_Client.publish(String(MQTT_REPORT_WIFI + "/gw").c_str(), WiFi.gatewayIP().toString().c_str(), true);
     // Subscribe
-    MQTT_Client.subscribe(String(MQTT_CMD + "#").c_str());
+    MQTT_Client.subscribe(String(MQTT_CMD + "/#").c_str());
     // TODO
     //MQTT_Client.subscribe("sensor/#");
+#if defined(DEBUG)
     Serial.print(F("MQTT connected to "));
     Serial.println(MQTT_SERVER);
+#endif
   }
   return MQTT_Client.connected();
 }
@@ -166,7 +171,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   // Create string objects
   String strTopic = String(topic);
   String strMessage = String(message);
+#if defined(DEBUG)
   Serial.println("MQTT " + strTopic + ": " + strMessage);
+#endif
 
   // Decompose the topic
   String strRoot, strTrunk, strBranch;
@@ -210,6 +217,9 @@ void wifiCallback (WiFiManager *wifiMgr) {
 void aprsAuthenticate() {
   String pkt = String("user ") + APRS_CALLSIGN + String(" pass ") + APRS_PASSCODE + String(" vers ") + NODENAME + " " + VERSION;
   APRS_Client.println(pkt);
+#if defined(DEBUG)
+  Serial.println("APRS: " + pkt);
+#endif
 }
 
 /**
@@ -254,6 +264,9 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
   pkt = pkt + NODENAME;
   // Send the packet
   APRS_Client.println(pkt);
+#if defined(DEBUG)
+  Serial.println("APRS: " + pkt);
+#endif
 }
 
 /**
@@ -262,21 +275,60 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
 
 */
 void aprsSendTelemetry(int vcc, int rssi, int heap, unsigned int luxVis, unsigned int luxIrd) {
-  // Increment the telemetry sequence, reset to 1 if exceeds 999
+  // Increment the telemetry sequence, reset it if exceeds 999
   aprsSeq += 1;
   if (aprsSeq > 999) {
-    aprsSeq = 1;
+    aprsSeq = 0;
   }
+  // Send the setup, if the sequence number is 0
+  if (aprsSeq == 0) {
+    aprsSendTelemetrySetup();
+  }
+
   // Compose the APRS packet
   String pkt = APRS_CALLSIGN;
   pkt = pkt + ">APRS,TCPIP*:";
-
   char text[35] = "";
   sprintf(text, "T#%03d,%03d,%03d,%03d,%03d,%03d,00000000", aprsSeq, (vcc - 2500) / 4, -rssi, heap / 200, luxVis / 256, luxIrd / 256);
   pkt = pkt + text;
-
   // Send the packet
   APRS_Client.println(pkt);
+#if defined(DEBUG)
+  Serial.println("APRS: " + pkt);
+#endif
+}
+
+/**
+  Send APRS telemetry setup
+  FIXME padding
+*/
+void aprsSendTelemetrySetup() {
+  String aprsCallSign = APRS_CALLSIGN;
+  String pkt = "";
+  // Parameter names
+  pkt = aprsCallSign + ">APRS,TCPIP*::" + aprsCallSign + "   :PARM.Vcc,RSSI,Heap,IRed,Vis,B1,B2,B3,B4,B5,B6,B7,B8";
+  APRS_Client.println(pkt);
+#if defined(DEBUG)
+  Serial.println("APRS: " + pkt);
+#endif
+  // Equtions
+  pkt = aprsCallSign + ">APRS,TCPIP*::" + aprsCallSign + "   :EQNS.0,0.004,2.5,0,-1,0,0,200,0,0,256,0,0,256,0";
+  APRS_Client.println(pkt);
+#if defined(DEBUG)
+  Serial.println("APRS: " + pkt);
+#endif
+  // Units
+  pkt = aprsCallSign + ">APRS,TCPIP*::" + aprsCallSign + "   :UNIT.V,dBm,Bytes,units,units,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A";
+  APRS_Client.println(pkt);
+#if defined(DEBUG)
+  Serial.println("APRS: " + pkt);
+#endif
+  // Bit sense and project name
+  pkt = aprsCallSign + ">APRS,TCPIP*::" + aprsCallSign + "   :BITS.11111111," + NODENAME + "/" + VERSION;
+  APRS_Client.println(pkt);
+#if defined(DEBUG)
+  Serial.println("APRS: " + pkt);
+#endif
 }
 
 void setup() {
