@@ -24,8 +24,9 @@
   various local telemetry.
 */
 
-// The DEBUG flag
+// The DEBUG and DEVEL flag
 #define DEBUG
+#define DEVEL
 
 // The sensors are connected to I2C
 #define SDA 0
@@ -38,10 +39,10 @@
 // WiFi
 #include <ESP8266WiFi.h>
 #include <WiFiManager.h>
-#include <WiFiUdp.h>
 
 // NTP
-#include <NTPClient.h>
+#include <NtpClientLib.h>
+#include <TimeLib.h>
 
 // Timer
 #include <AsyncDelay.h>
@@ -51,9 +52,15 @@
 
 
 // Device name
-String VERSION = "0.3";
+#if defined(DEVEL)
+String NODENAME = "DevNode";
+String LC_NODENAME = "devnode";
+String VERSION = "0.1";
+#else
 String NODENAME = "WxSta";
 String LC_NODENAME = "wxsta";  // FIXME DNRY
+String VERSION = "0.3";
+#endif
 
 // Altitude
 const int ALTI = 83; // meters
@@ -61,13 +68,14 @@ double ALTI_CORR = pow((double)(1.0 - 2.25577e-5 * ALTI), (double)(-5.25588));
 
 // NTP
 const int  TZ = 2;
-const char NTP_SERVER[] = "europe.pool.ntp.org";
-const int  NTP_INTERVAL = 765 * 1000;
-WiFiUDP ntpUDP;
-NTPClient NTP_Client(ntpUDP, NTP_SERVER, 3600 * TZ, NTP_INTERVAL);
+String NTP_SERVER = "europe.pool.ntp.org";
 
 // MQTT parameters
+#if defined(DEVEL)
+const char MQTT_ID[] = "devnode-eridu-eu-org";
+#else
 const char MQTT_ID[] = "wxsta-eridu-eu-org";
+#endif
 const char MQTT_SERVER[] = "eridu.eu.org";
 const int  MQTT_PORT = 1883;
 const int  MQTT_INTERVAL = 5000;
@@ -230,15 +238,19 @@ void wifiCallback (WiFiManager *wifiMgr) {
   Serial.println(strMsg);
 }
 
+/**
+  Return time in APRS format: DDHHMMz
+
+*/
 String aprsTime() {
-  unsigned long rawTime = NTP_Client.getEpochTime();
-  unsigned long hours = (rawTime % 86400L) / 3600;
+  time_t moment = now();
+  int days = day(moment);
+  String dayStr = days < 10 ? "0" + String(days) : String(days);
+  int hours = hour(moment);
   String hoursStr = hours < 10 ? "0" + String(hours) : String(hours);
-  unsigned long minutes = (rawTime % 3600) / 60;
+  int minutes = minute(moment);
   String minuteStr = minutes < 10 ? "0" + String(minutes) : String(minutes);
-  unsigned long seconds = rawTime % 60;
-  String secondStr = seconds < 10 ? "0" + String(seconds) : String(seconds);
-  return hoursStr + minuteStr + secondStr;
+  return dayStr + hoursStr + minuteStr + "z";
 }
 
 /**
@@ -265,27 +277,36 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
   // Compose the APRS packet
   String pkt = APRS_CALLSIGN;
   pkt = pkt + ">APRS,TCPIP*:";
-  pkt = pkt + "@" + aprsTime() + "h";
+  pkt = pkt + "@" + aprsTime();
   pkt = pkt + APRS_LOCATION;
   // Wind
   pkt = pkt + "_.../...g...";
   // Temperature
-  char txtTemp[4] = "";
-  sprintf(txtTemp, "%03d", (int)fahr);
-  pkt = pkt + "t" + txtTemp;
-  // Humidity
-  if (hmdt == 100) {
-    pkt = pkt + "h00";
+  if (temp >= -273.15) {
+    char txtTemp[4] = "";
+    sprintf(txtTemp, "%03d", (int)fahr);
+    pkt = pkt + "t" + txtTemp;
   }
   else {
-    char txtHmdt[3] = "";
-    sprintf(txtHmdt, "%02d", (int)hmdt);
-    pkt = pkt + "h" + txtHmdt;
+    pkt = pkt + "t...";
+  }
+  // Humidity
+  if (hmdt >= 0) {
+    if (hmdt == 100) {
+      pkt = pkt + "h00";
+    }
+    else {
+      char txtHmdt[3] = "";
+      sprintf(txtHmdt, "%02d", (int)hmdt);
+      pkt = pkt + "h" + txtHmdt;
+    }
   }
   // Athmospheric pressure
-  char txtPres[6] = "";
-  sprintf(txtPres, "%05d", (int)(pres / 10));
-  pkt = pkt + "b" + txtPres;
+  if (pres >= 0) {
+    char txtPres[6] = "";
+    sprintf(txtPres, "%05d", (int)(pres / 10));
+    pkt = pkt + "b" + txtPres;
+  }
   // Illuminance, if valid
   if (lux >= 0) {
     char txtLux[4] = "";
@@ -295,7 +316,7 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
   // Comment (device name)
   pkt = pkt + NODENAME;
   // Send the packet
-  APRS_Client.println(pkt);
+  //APRS_Client.println(pkt);
 #if defined(DEBUG)
   Serial.println("APRS: " + pkt);
 #endif
@@ -324,7 +345,7 @@ void aprsSendTelemetry(int vcc, int rssi, int heap, unsigned int luxVis, unsigne
   sprintf(text, "T#%03d,%03d,%03d,%03d,%03d,%03d,", aprsSeq, (vcc - 2500) / 4, -rssi, heap / 200, luxVis / 256, luxIrd / 256);
   pkt = pkt + text + String(bits, BIN);
   // Send the packet
-  APRS_Client.println(pkt);
+  //APRS_Client.println(pkt);
 #if defined(DEBUG)
   Serial.println("APRS: " + pkt);
 #endif
@@ -385,9 +406,8 @@ void setup() {
   // Connected
   showWiFi();
 
-  // Start the NTP client
-  NTP_Client.begin();
-  NTP_Client.forceUpdate();
+  // Start the NTP sync
+  NTP.begin(NTP_SERVER, TZ, true);
 
   // Start the MQTT client
   MQTT_Client.setServer(MQTT_SERVER, MQTT_PORT);
@@ -433,7 +453,9 @@ void setup() {
   }
 
   // Initialize the random number generator and set the APRS telemetry start sequence
-  randomSeed(NTP_Client.getEpochTime());
+  if (timeStatus() != timeNotSet) {
+    randomSeed(now());
+  }
   aprsSeq = random(1000);
 
   // Sensor timer
@@ -495,6 +517,7 @@ void loop() {
     int vcc = ESP.getVcc();
     MQTT_Client.publish(String(MQTT_REPORT_WIFI + "/rssi").c_str(), String(rssi).c_str());
     MQTT_Client.publish(String(MQTT_REPORT + "/uptime").c_str(), String(millis() / 1000).c_str());
+    MQTT_Client.publish(String(MQTT_REPORT + "/uptime/text").c_str(), NTP.getUptimeString().c_str());
     MQTT_Client.publish(String(MQTT_REPORT + "/heap").c_str(), String(heap).c_str());
     MQTT_Client.publish(String(MQTT_REPORT + "/vcc").c_str(), String((float)vcc / 1000, 3).c_str());
 
@@ -511,7 +534,4 @@ void loop() {
     // Repeat sensor reading
     delaySNS.repeat();
   }
-
-  // NTP
-  NTP_Client.update();
 }
