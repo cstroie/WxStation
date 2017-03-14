@@ -52,14 +52,14 @@
 
 
 // Device name
-#if defined(DEVEL)
+#ifdef DEVEL
 String NODENAME = "DevNode";
 String LC_NODENAME = "devnode";
 String VERSION = "0.1";
 #else
 String NODENAME = "WxSta";
 String LC_NODENAME = "wxsta";  // FIXME DNRY
-String VERSION = "0.3";
+String VERSION = "0.3.1";
 #endif
 
 // Altitude
@@ -71,14 +71,14 @@ const int  TZ = 2;
 String NTP_SERVER = "europe.pool.ntp.org";
 
 // MQTT parameters
-#if defined(DEVEL)
-const char MQTT_ID[] = "devnode-eridu-eu-org";
+#ifdef DEVEL
+String MQTT_ID = "devnode-eridu-eu-org";
 #else
-const char MQTT_ID[] = "wxsta-eridu-eu-org";
+String MQTT_ID = "wxsta-eridu-eu-org";
 #endif
-const char MQTT_SERVER[] = "eridu.eu.org";
-const int  MQTT_PORT = 1883;
-const int  MQTT_INTERVAL = 5000;
+String MQTT_SERVER = "eridu.eu.org";
+int MQTT_PORT = 1883;
+int MQTT_INTERVAL = 5000;
 String MQTT_CMD  = "command/" + LC_NODENAME;
 String MQTT_REPORT = "report/" + LC_NODENAME;
 String MQTT_REPORT_WIFI = MQTT_REPORT + "/wifi";
@@ -88,11 +88,11 @@ PubSubClient MQTT_Client(WiFi_Client);
 AsyncDelay delayMQTT;
 
 // APRS parameters
-const char APRS_SERVER[] = "cwop5.aprs.net";
+String APRS_SERVER = "cwop5.aprs.net";
 const int  APRS_PORT = 14580;
-const char APRS_CALLSIGN[] = "FW0690";
+String APRS_CALLSIGN = "FW0690";
 const int  APRS_PASSCODE = -1;
-const char APRS_LOCATION[] = "4427.67N/02608.03E";
+String APRS_LOCATION = "4427.67N/02608.03E";
 const int  APRS_SNS_MAX = 5; // x SNS_INTERVAL
 int APRS_SNS_COUNT = 0;
 unsigned int aprsSeq = 0;
@@ -118,7 +118,7 @@ int zBaroBot  = 95000;
 int zThreshold = 50;
 int zDelay = 3600;
 unsigned long zNextTime = 0;
-int zPrevious = 0;
+float zPrevious = 0;
 
 String zForecast[] = {"Settled fine", "Fine weather", "Becoming fine", "Fine, becoming less settled", "Fine, possible showers",
                       "Fairly fine, improving", "Fairly fine, possible showers early", "Fairly fine, showery later",
@@ -163,7 +163,7 @@ void showWiFi() {
 */
 boolean mqttReconnect() {
   Serial.println(F("MQTT connecting..."));
-  if (MQTT_Client.connect(MQTT_ID)) {
+  if (MQTT_Client.connect(MQTT_ID.c_str())) {
     // Publish the connection report
     MQTT_Client.publish(String(MQTT_REPORT_WIFI + "/hostname").c_str(), WiFi.hostname().c_str(), true);
     MQTT_Client.publish(String(MQTT_REPORT_WIFI + "/mac").c_str(), WiFi.macAddress().c_str(), true);
@@ -175,7 +175,7 @@ boolean mqttReconnect() {
     MQTT_Client.subscribe(String(MQTT_CMD + "/#").c_str());
     // TODO
     //MQTT_Client.subscribe("sensor/#");
-#if defined(DEBUG)
+#ifdef DEBUG
     Serial.print(F("MQTT connected to "));
     Serial.println(MQTT_SERVER);
 #endif
@@ -200,7 +200,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   // Create string objects
   String strTopic = String(topic);
   String strMessage = String(message);
-#if defined(DEBUG)
+#ifdef DEBUG
   Serial.println("MQTT " + strTopic + ": " + strMessage);
 #endif
 
@@ -259,9 +259,9 @@ String aprsTime() {
 
 */
 void aprsAuthenticate() {
-  String pkt = String("user ") + APRS_CALLSIGN + String(" pass ") + APRS_PASSCODE + String(" vers ") + NODENAME + " " + VERSION;
+  String pkt = "user " + APRS_CALLSIGN + " pass " + APRS_PASSCODE + " vers " + NODENAME + " " + VERSION;
   APRS_Client.println(pkt);
-#if defined(DEBUG)
+#ifdef DEBUG
   Serial.println("APRS: " + pkt);
 #endif
 }
@@ -316,8 +316,8 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
   // Comment (device name)
   pkt = pkt + NODENAME;
   // Send the packet
-  //APRS_Client.println(pkt);
-#if defined(DEBUG)
+  APRS_Client.println(pkt);
+#ifdef DEBUG
   Serial.println("APRS: " + pkt);
 #endif
 }
@@ -345,43 +345,122 @@ void aprsSendTelemetry(int vcc, int rssi, int heap, unsigned int luxVis, unsigne
   sprintf(text, "T#%03d,%03d,%03d,%03d,%03d,%03d,", aprsSeq, (vcc - 2500) / 4, -rssi, heap / 200, luxVis / 256, luxIrd / 256);
   pkt = pkt + text + String(bits, BIN);
   // Send the packet
-  //APRS_Client.println(pkt);
-#if defined(DEBUG)
+  APRS_Client.println(pkt);
+#ifdef DEBUG
   Serial.println("APRS: " + pkt);
 #endif
 }
 
 /**
   Send APRS telemetry setup
-  FIXME padding
+
 */
 void aprsSendTelemetrySetup() {
-  String aprsCallSign = APRS_CALLSIGN;
-  String pkt = "";
+  String pkt;
+  String pad = String("         ").substring(APRS_CALLSIGN.length());
   // Parameter names
-  pkt = aprsCallSign + ">APRS,TCPIP*::" + aprsCallSign + "   :PARM.Vcc,RSSI,Heap,IRed,Vis,B1,B2,B3,B4,B5,B6,B7,B8";
+  pkt = APRS_CALLSIGN + ">APRS,TCPIP*::" + APRS_CALLSIGN + pad + ":PARM.Vcc,RSSI,Heap,IRed,Vis,B1,B2,B3,B4,B5,B6,B7,B8";
   APRS_Client.println(pkt);
-#if defined(DEBUG)
+#ifdef DEBUG
   Serial.println("APRS: " + pkt);
 #endif
   // Equtions
-  pkt = aprsCallSign + ">APRS,TCPIP*::" + aprsCallSign + "   :EQNS.0,0.004,2.5,0,-1,0,0,200,0,0,256,0,0,256,0";
+  pkt = APRS_CALLSIGN + ">APRS,TCPIP*::" + APRS_CALLSIGN + pad + ":EQNS.0,0.004,2.5,0,-1,0,0,200,0,0,256,0,0,256,0";
   APRS_Client.println(pkt);
-#if defined(DEBUG)
+#ifdef DEBUG
   Serial.println("APRS: " + pkt);
 #endif
   // Units
-  pkt = aprsCallSign + ">APRS,TCPIP*::" + aprsCallSign + "   :UNIT.V,dBm,Bytes,units,units,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A";
+  pkt = APRS_CALLSIGN + ">APRS,TCPIP*::" + APRS_CALLSIGN + pad + ":UNIT.V,dBm,Bytes,units,units,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A";
   APRS_Client.println(pkt);
-#if defined(DEBUG)
+#ifdef DEBUG
   Serial.println("APRS: " + pkt);
 #endif
   // Bit sense and project name
-  pkt = aprsCallSign + ">APRS,TCPIP*::" + aprsCallSign + "   :BITS.11111111," + NODENAME + "/" + VERSION;
+  pkt = APRS_CALLSIGN + ">APRS,TCPIP*::" + APRS_CALLSIGN + pad + ":BITS.11111111," + NODENAME + "/" + VERSION;
   APRS_Client.println(pkt);
-#if defined(DEBUG)
+#ifdef DEBUG
   Serial.println("APRS: " + pkt);
 #endif
+}
+
+/**
+  Send APRS status
+  FW0690>APRS,TCPIP*:>13:06 Fine weather
+
+*/
+void aprsSendStatus(String message) {
+  // Send only if the message is not empty
+  if (message != "") {
+    // Compose the APRS packet
+    String pkt = APRS_CALLSIGN + ">APRS,TCPIP*:>" + NTP.getTimeStr() + " " + message;
+    // Send the packet
+    APRS_Client.println(pkt);
+#ifdef DEBUG
+    Serial.println("APRS: " + pkt);
+#endif
+  }
+}
+
+/**
+  Get the Zambretti forecast
+
+*/
+String zambretti(float zCurrent) {
+  String result = "";
+  if (zNextTime == 0) {
+    // First run
+    zNextTime = millis() + zDelay * 1000;
+    zPrevious = zCurrent;
+  }
+  else {
+    if (millis() >= zNextTime) {
+      // Timer expired
+      int trend = 0;
+      int index = 0;
+      float range = zBaroTop - zBaroBot;
+      float pres = zCurrent;
+      // Get the trend
+      if ((zCurrent > zPrevious ) and (zCurrent - zPrevious > zThreshold)) {
+        trend = 1;
+      }
+      else if ((zCurrent < zPrevious ) and (zPrevious - zCurrent > zThreshold)) {
+        trend = -1;
+      }
+      else {
+        trend = 0;
+      }
+      // Check if summer
+      if ((month() >= 4) and (month() <= 9)) {
+        if (trend > 0) {
+          pres += range * 0.07;
+        }
+        else if (trend < 0) {
+          pres -= range * 0.07;
+        }
+      }
+      // Validate interval
+      if (pres > zBaroTop) {
+        pres = zBaroTop - 2 * zThreshold;
+      }
+      // Get the forecast
+      index = (int)(22 * (pres - zBaroBot) / range);
+      if ((index >= 0) and (index <= 22)) {
+        if (trend > 0) {
+          result = zForecast[zRising[index]];
+        }
+        else if (trend < 0) {
+          result = zForecast[zFalling[index]];
+        }
+        else {
+          result = zForecast[zSteady[index]];
+        }
+      }
+      // Set the next timer
+      zNextTime = zNextTime + zDelay * 1000;
+      zPrevious = zCurrent;
+    }
+  }
 }
 
 void setup() {
@@ -410,7 +489,7 @@ void setup() {
   NTP.begin(NTP_SERVER, TZ, true);
 
   // Start the MQTT client
-  MQTT_Client.setServer(MQTT_SERVER, MQTT_PORT);
+  MQTT_Client.setServer(MQTT_SERVER.c_str(), MQTT_PORT);
   MQTT_Client.setCallback(mqttCallback);
   delayMQTT.start(MQTT_INTERVAL, AsyncDelay::MILLIS);
 
@@ -481,8 +560,8 @@ void loop() {
     }
 
     // Read TSL2561
-    unsigned int luxVis, luxIrd;
-    double lux;
+    unsigned int luxVis = 0, luxIrd = 0;
+    double lux = -1;
     if (light.getData(luxVis, luxIrd)) {
       boolean good = light.getLux(gain, ms, luxVis, luxIrd, lux);
       if (good) {
@@ -523,9 +602,12 @@ void loop() {
 
     // APRS (every 5 minutes)
     if (APRS_SNS_COUNT == 1) {
-      if (APRS_Client.connect(APRS_SERVER, APRS_PORT)) {
+      if (APRS_Client.connect(APRS_SERVER.c_str(), APRS_PORT)) {
         aprsAuthenticate();
-        aprsSendWeather(temp, hmdt, seal, lux);
+        if (atmo_ok) {
+          aprsSendWeather(temp, hmdt, seal, lux);
+          aprsSendStatus(zambretti(seal));
+        }
         aprsSendTelemetry(vcc, rssi, heap, luxVis, luxIrd, 0);
         APRS_Client.stop();
       };
