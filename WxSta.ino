@@ -35,7 +35,6 @@
 #include <SparkFunBME280.h>
 #include <SparkFunTSL2561.h>
 
-
 // WiFi
 #include <ESP8266WiFi.h>
 #include <WiFiManager.h>
@@ -50,6 +49,9 @@
 // MQTT
 #include <PubSubClient.h>
 
+// Statistics
+#include <RunningMedian.h>
+
 
 // Device name
 #ifdef DEVEL
@@ -62,12 +64,9 @@ String LC_NODENAME = "wxsta";  // FIXME DNRY
 String VERSION = "0.3.1";
 #endif
 
-// Altitude
-const int ALTI = 83; // meters
-double ALTI_CORR = pow((double)(1.0 - 2.25577e-5 * ALTI), (double)(-5.25588));
 
 // NTP
-const int  TZ = 2;
+const int TZ = 0;
 String NTP_SERVER = "europe.pool.ntp.org";
 
 // MQTT parameters
@@ -89,14 +88,35 @@ AsyncDelay delayMQTT;
 
 // APRS parameters
 String APRS_SERVER = "cwop5.aprs.net";
-const int  APRS_PORT = 14580;
+const int APRS_PORT = 14580;
+#ifdef DEVEL
+String APRS_CALLSIGN = "FW0727";
+const int  APRS_PASSCODE = -1;
+String APRS_LOCATION = "4455.29N/02527.08E";
+const int ALTI = 282; // meters
+#else
 String APRS_CALLSIGN = "FW0690";
 const int  APRS_PASSCODE = -1;
 String APRS_LOCATION = "4427.67N/02608.03E";
-const int  APRS_SNS_MAX = 5; // x SNS_INTERVAL
+const int ALTI = 83; // meters
+#endif
+double ALTI_CORR = pow((double)(1.0 - 2.25577e-5 * ALTI), (double)(-5.25588));
+float ALTIF = ALTI * 3.28084;
+const int APRS_SNS_MAX = 5; // x SNS_INTERVAL
 int APRS_SNS_COUNT = 0;
 unsigned int aprsSeq = 0;
 WiFiClient APRS_Client;
+
+// Statistics
+RunningMedian rmTemp = RunningMedian(APRS_SNS_MAX);
+RunningMedian rmHmdt = RunningMedian(APRS_SNS_MAX);
+RunningMedian rmPres = RunningMedian(APRS_SNS_MAX);
+RunningMedian rmLux  = RunningMedian(APRS_SNS_MAX);
+RunningMedian rmVisi = RunningMedian(APRS_SNS_MAX);
+RunningMedian rmIRed = RunningMedian(APRS_SNS_MAX);
+RunningMedian rmVcc  = RunningMedian(APRS_SNS_MAX);
+RunningMedian rmRSSI = RunningMedian(APRS_SNS_MAX);
+RunningMedian rmHeap = RunningMedian(APRS_SNS_MAX);
 
 // Sensors
 const int SNS_INTERVAL  = 60 * 1000;
@@ -180,6 +200,7 @@ boolean mqttReconnect() {
     Serial.println(MQTT_SERVER);
 #endif
   }
+  yield();
   return MQTT_Client.connected();
 }
 
@@ -403,6 +424,23 @@ void aprsSendStatus(String message) {
 }
 
 /**
+  Send APRS position
+  FW0690>APRS,TCPIP*:!DDMM.hhN/DDDMM.hhW$comments
+
+*/
+void aprsSendPosition(String comment) {
+  String alti = String(ALTIF, 0);
+  String pad = String("000000").substring(alti.length());
+  // Compose the APRS packet
+  String pkt = APRS_CALLSIGN + ">APRS,TCPIP*:!" + APRS_LOCATION + "/000/000/A=" + pad + alti + comment;
+  // Send the packet
+  APRS_Client.println(pkt);
+#ifdef DEBUG
+  Serial.println("APRS: " + pkt);
+#endif
+}
+
+/**
   Get the Zambretti forecast
 
 */
@@ -486,12 +524,15 @@ void setup() {
   showWiFi();
 
   // Start the NTP sync
-  NTP.begin(NTP_SERVER, TZ, true);
+  //NTP.begin(NTP_SERVER, TZ, true);
+  NTP.begin(NTP_SERVER, TZ, false);
+  yield();
 
   // Start the MQTT client
   MQTT_Client.setServer(MQTT_SERVER.c_str(), MQTT_PORT);
   MQTT_Client.setCallback(mqttCallback);
   delayMQTT.start(MQTT_INTERVAL, AsyncDelay::MILLIS);
+  yield();
 
   // For I2C, the ESP8266-1 module uses the pin 0 for SDA and 2 for SCL
 #if defined(ARDUINO_ARCH_ESP8266)
@@ -530,12 +571,14 @@ void setup() {
     light_ok = false;
     Serial.println("TSL2561 sensor missing.");
   }
+  yield();
 
   // Initialize the random number generator and set the APRS telemetry start sequence
   if (timeStatus() != timeNotSet) {
     randomSeed(now());
   }
   aprsSeq = random(1000);
+  yield();
 
   // Sensor timer
   delaySNS.start(SNS_INTERVAL, AsyncDelay::MILLIS);
@@ -550,6 +593,7 @@ void loop() {
       delayMQTT.repeat();
     }
   }
+  yield();
 
   // Read the sensors and publish telemetry
   if (delaySNS.isExpired()) {
@@ -565,6 +609,7 @@ void loop() {
     if (light.getData(luxVis, luxIrd)) {
       boolean good = light.getLux(gain, ms, luxVis, luxIrd, lux);
       if (good) {
+        // Send to MQTT
         MQTT_Client.publish(String(MQTT_SENSOR + "/illuminance").c_str(), String(lux, 2).c_str());
         MQTT_Client.publish(String(MQTT_SENSOR + "/visible").c_str(), String(luxVis).c_str());
         MQTT_Client.publish(String(MQTT_SENSOR + "/infrared").c_str(), String(luxIrd).c_str());
@@ -573,42 +618,65 @@ void loop() {
         lux = -1;
       }
     }
+    // Running Median
+    rmLux.add(lux);
+    rmVisi.add(luxVis);
+    rmIRed.add(luxIrd);
+    yield();
 
     // Read BME280
     float temp, pres, seal, hmdt, dewp;
     if (atmo_ok) {
+      // Get the weather parameters
       temp = atmo.readTempC();
       pres = atmo.readFloatPressure();
       seal = pres * ALTI_CORR;
       hmdt = atmo.readFloatHumidity();
       dewp = 243.04 * (log(hmdt / 100.0) + ((17.625 * temp) / (243.04 + temp))) / (17.625 - log(hmdt / 100.0) - ((17.625 * temp) / (243.04 + temp)));
-
+      // Running Median
+      rmTemp.add(temp);
+      rmHmdt.add(hmdt);
+      rmPres.add(seal);
+      // Send to MQTT
       MQTT_Client.publish(String(MQTT_SENSOR + "/temperature").c_str(), String(temp, 2).c_str());
       MQTT_Client.publish(String(MQTT_SENSOR + "/humidity").c_str(), String(hmdt, 2).c_str());
       MQTT_Client.publish(String(MQTT_SENSOR + "/dewpoint").c_str(), String(dewp, 2).c_str());
       MQTT_Client.publish(String(MQTT_SENSOR + "/pressure").c_str(), String(pres / 100, 2).c_str());
       MQTT_Client.publish(String(MQTT_SENSOR + "/sealevel").c_str(), String(seal / 100, 2).c_str());
     }
+    yield();
 
     // Various telemetry
     int rssi = WiFi.RSSI();
     int heap = ESP.getFreeHeap();
     int vcc = ESP.getVcc();
+    // Running Median
+    rmVcc.add(vcc);
+    rmRSSI.add(rssi);
+    rmHeap.add(heap);
+    // Send to MQTT
     MQTT_Client.publish(String(MQTT_REPORT_WIFI + "/rssi").c_str(), String(rssi).c_str());
     MQTT_Client.publish(String(MQTT_REPORT + "/uptime").c_str(), String(millis() / 1000).c_str());
     MQTT_Client.publish(String(MQTT_REPORT + "/uptime/text").c_str(), NTP.getUptimeString().c_str());
     MQTT_Client.publish(String(MQTT_REPORT + "/heap").c_str(), String(heap).c_str());
     MQTT_Client.publish(String(MQTT_REPORT + "/vcc").c_str(), String((float)vcc / 1000, 3).c_str());
+    yield();
 
-    // APRS (every 5 minutes)
+    // APRS (every APRS_SNS_MAX minutes)
     if (APRS_SNS_COUNT == 1) {
       if (APRS_Client.connect(APRS_SERVER.c_str(), APRS_PORT)) {
+        yield();
         aprsAuthenticate();
+        yield();
+        //aprsSendPosition(" WxStaProbe");
         if (atmo_ok) {
-          aprsSendWeather(temp, hmdt, seal, lux);
+          aprsSendWeather(rmTemp.getMedian(), rmHmdt.getMedian(), rmPres.getMedian(), rmLux.getMedian());
+          yield();
           aprsSendStatus(zambretti(seal));
+          yield();
         }
-        aprsSendTelemetry(vcc, rssi, heap, luxVis, luxIrd, 0);
+        aprsSendTelemetry(rmVcc.getMedian(), rmRSSI.getMedian(), rmHeap.getMedian(), rmVisi.getMedian(), rmIRed.getMedian(), 0);
+        yield();
         APRS_Client.stop();
       };
     }
