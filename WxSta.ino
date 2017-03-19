@@ -26,7 +26,7 @@
 
 // The DEBUG and DEVEL flag
 #define DEBUG
-#define DEVEL
+//#define DEVEL
 
 // The sensors are connected to I2C
 #define SDA 0
@@ -499,6 +499,7 @@ String zambretti(float zCurrent) {
       zPrevious = zCurrent;
     }
   }
+  return result;
 }
 
 void setup() {
@@ -667,12 +668,11 @@ void loop() {
       if (APRS_Client.connect(APRS_SERVER.c_str(), APRS_PORT)) {
         yield();
         aprsAuthenticate();
-        yield();
         //aprsSendPosition(" WxStaProbe");
         if (atmo_ok) {
-          aprsSendWeather(rmTemp.getMedian(), rmHmdt.getMedian(), rmPres.getMedian(), rmLux.getMedian());
-          yield();
-          aprsSendStatus(zambretti(seal));
+          float mp = rmPres.getMedian();
+          aprsSendWeather(rmTemp.getMedian(), rmHmdt.getMedian(), mp, rmLux.getMedian());
+          aprsSendStatus(zambretti(mp));
           yield();
         }
         aprsSendTelemetry(rmVcc.getMedian(), rmRSSI.getMedian(), rmHeap.getMedian(), rmVisi.getMedian(), rmIRed.getMedian(), 0);
