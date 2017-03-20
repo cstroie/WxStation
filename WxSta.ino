@@ -51,6 +51,7 @@
 
 // Statistics
 #include <RunningMedian.h>
+#include "lnregr.c"
 
 
 // Device name
@@ -116,6 +117,15 @@ RunningMedian rmIRed = RunningMedian(APRS_SNS_MAX);
 RunningMedian rmVcc  = RunningMedian(APRS_SNS_MAX);
 RunningMedian rmRSSI = RunningMedian(APRS_SNS_MAX);
 RunningMedian rmHeap = RunningMedian(APRS_SNS_MAX);
+
+// Linear regression
+const int rgMax = 36;
+int rgIdx = 0;
+float rgX[rgMax];
+float rgY[rgMax];
+//float rgY[] = {1974, 1828, 1709, 1639, 1526, 1488, 1442, 1393, 1361, 1354, 1355, 1316, 1250, 1208, 1245, 1242, 1250, 1328, 1370, 1335, 1298, 1210, 1167, 1125, 1120, 1153, 1271, 1156, 1068, 988, 917, 865, 836, 801, 790, 82};
+//float rgX[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35};
+float rgAB[] = {0, 0};
 
 // Sensors
 const int SNS_INTERVAL  = 60 * 1000;
@@ -460,6 +470,26 @@ void aprsSendPosition(String comment) {
 }
 
 /**
+  Store previous athmospheric pressures for each 5 minute in the last 3 hours
+  @param x timestamp
+  @param y current value
+*/
+void rgAdd(float x, float y) {
+  if (rgIdx == rgMax) {
+    int s = sizeof(rgX[0]);
+    memmove(rgX, rgX + s, (rgIdx - 1) * s);
+    memmove(rgY, rgY + s, (rgIdx - 1) * s);
+    rgX[rgIdx - 1] = x;
+    rgY[rgIdx - 1] = y;
+  }
+  else {
+    rgX[rgIdx] = x;
+    rgY[rgIdx] = y;
+    rgIdx++;
+  }
+}
+
+/**
   Store the previous athmospheric pressures for the last 1, 2 and 3 hours
   @param pres current value of the atmospheric pressure
 */
@@ -476,6 +506,7 @@ void zPrevPres(float pres) {
   @return the Zambretti forecast
 */
 String zambretti(float zCurrent) {
+  rgAdd((int)(millis() / 60000), zCurrent);
   String result = "";
   if (zNextTime == 0) {
     // First run, set the timeout to the next hour
@@ -506,6 +537,10 @@ String zambretti(float zCurrent) {
         else if (trend < 0) result = zForecast[zFalling[index]];
         else                result = zForecast[zSteady[index]];
       }
+      lnRegr(rgX, rgY, rgAB, rgIdx);
+      Serial.println(rgAB[0]);
+      Serial.println(rgAB[1]);
+      result = result + " (" + String(rgAB[0], 2) + ")";
       // Set the next timer and store the pressure
       zNextTime += zDelay * 1000;
       zPrevPres(zCurrent);
