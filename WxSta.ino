@@ -26,7 +26,7 @@
 
 // The DEBUG and DEVEL flag
 #define DEBUG
-//#define DEVEL
+#define DEVEL
 
 // The sensors are connected to I2C
 #define SDA 0
@@ -125,7 +125,7 @@ bool atmo_ok = false;
 SFE_TSL2561 light;
 bool light_ok = false;
 boolean gain = false;
-unsigned char shtr = 2;
+unsigned char shtr = 1;
 unsigned int ms;
 AsyncDelay delaySNS;
 
@@ -133,8 +133,8 @@ AsyncDelay delaySNS;
 ADC_MODE(ADC_VCC);
 
 // Zambretti forecaster
-int zBaroTop  = 105000;
-int zBaroBot  = 95000;
+int zBaroTop   = 105000;
+int zBaroBot   = 95000;
 int zThreshold = 50;
 int zDelay = 3600;
 unsigned long zNextTime = 0;
@@ -259,6 +259,22 @@ void wifiCallback (WiFiManager *wifiMgr) {
   Serial.println(strMsg);
 }
 
+String zeroPad(float x, int digits) {
+  long y = (long)x;
+  String result = String(y);
+  String pad = "000000000";
+  if (result.length() < digits) {
+    pad = pad.substring(0, digits - result.length());
+    if (y < 0) {
+      result = "-" + pad + String(-y);
+    }
+    else {
+      result = pad + result;
+    }
+  }
+  return result;
+}
+
 /**
   Return time in APRS format: DDHHMMz
 
@@ -304,9 +320,7 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
   pkt = pkt + "_.../...g...";
   // Temperature
   if (temp >= -273.15) {
-    char txtTemp[4] = "";
-    sprintf(txtTemp, "%03d", (int)fahr);
-    pkt = pkt + "t" + txtTemp;
+    pkt = pkt + "t" + zeroPad(fahr, 3);
   }
   else {
     pkt = pkt + "t...";
@@ -317,22 +331,16 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
       pkt = pkt + "h00";
     }
     else {
-      char txtHmdt[3] = "";
-      sprintf(txtHmdt, "%02d", (int)hmdt);
-      pkt = pkt + "h" + txtHmdt;
+      pkt = pkt + "h" + zeroPad(hmdt, 2);
     }
   }
   // Athmospheric pressure
   if (pres >= 0) {
-    char txtPres[6] = "";
-    sprintf(txtPres, "%05d", (int)(pres / 10));
-    pkt = pkt + "b" + txtPres;
+    pkt = pkt + "b" + zeroPad(pres / 10, 5);
   }
   // Illuminance, if valid
   if (lux >= 0) {
-    char txtLux[4] = "";
-    sprintf(txtLux, "%03d", (int)(lux * 0.0079));
-    pkt = pkt + "L" + txtLux;
+    pkt = pkt + "L" + zeroPad(lux * 0.0079, 3);
   }
   // Comment (device name)
   pkt = pkt + NODENAME;
@@ -360,11 +368,15 @@ void aprsSendTelemetry(int vcc, int rssi, int heap, unsigned int luxVis, unsigne
   }
 
   // Compose the APRS packet
-  String pkt = APRS_CALLSIGN;
-  pkt = pkt + ">APRS,TCPIP*:";
-  char text[27] = "";
-  sprintf(text, "T#%03d,%03d,%03d,%03d,%03d,%03d,", aprsSeq, (vcc - 2500) / 4, -rssi, heap / 200, luxVis / 256, luxIrd / 256);
-  pkt = pkt + text + String(bits, BIN);
+  String pkt = APRS_CALLSIGN +
+               ">APRS,TCPIP*:T#" +
+               zeroPad(aprsSeq, 3) +
+               zeroPad((vcc - 2500) / 4, 3) +
+               zeroPad(-rssi, 3) +
+               zeroPad(heap / 200, 3) +
+               zeroPad(luxVis / 256, 3) +
+               zeroPad(luxIrd / 256, 3) +
+               String(bits, BIN);
   // Send the packet
   APRS_Client.println(pkt);
 #ifdef DEBUG
@@ -509,6 +521,8 @@ void setup() {
   Serial.print(NODENAME);
   Serial.print(" ");
   Serial.println(__DATE__);
+  Serial.print("APRS Callsign: ");
+  Serial.println(APRS_CALLSIGN);
 
   // Try to connect to WiFi
   WiFiManager wifiManager;
