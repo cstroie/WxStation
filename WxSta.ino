@@ -51,8 +51,6 @@
 
 // Statistics
 #include <RunningMedian.h>
-#include "lnregr.c"
-
 
 // Device name
 #ifdef DEVEL
@@ -125,7 +123,7 @@ float rgX[rgMax];
 float rgY[rgMax];
 //float rgY[] = {1974, 1828, 1709, 1639, 1526, 1488, 1442, 1393, 1361, 1354, 1355, 1316, 1250, 1208, 1245, 1242, 1250, 1328, 1370, 1335, 1298, 1210, 1167, 1125, 1120, 1153, 1271, 1156, 1068, 988, 917, 865, 836, 801, 790, 82};
 //float rgX[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35};
-float rgAB[] = {0, 0};
+float rgAB[] = {0, 0, 0};
 
 // Sensors
 const int SNS_INTERVAL  = 60 * 1000;
@@ -489,6 +487,34 @@ void rgAdd(float x, float y) {
   }
 }
 
+void rgLinear(int n, float *px, float *py, float *ab) {
+  int i;
+  float denom, dy, r = (n - 1), x, y;
+  float a1, a2, s, s1, s2, s3, s4;
+
+  s1 = s2 = s3 = s4 = s = 0;
+  for (i = 0; i < n; i++) {
+    x = px[i];
+    y = py[i];
+    s1 += x;
+    s2 += x * x;
+    s3 += y;
+    s4 += x * y;
+  }
+  if ((denom = n * s2 - s1 * s1)) {
+    a1 = (s3 * s2 - s1 * s4) / denom;
+    a2 = (n  * s4 - s3 * s1) / denom;
+    for (i = 0; i < n; i++) {
+      dy = py[i] - (a2 * px[i] + a1);
+      s += dy * dy;
+    }
+    s = sqrt(s / r);
+    ab[0] = a2;
+    ab[1] = a1;
+    ab[2] = s;
+  }
+}
+
 /**
   Store the previous athmospheric pressures for the last 1, 2 and 3 hours
   @param pres current value of the atmospheric pressure
@@ -537,9 +563,10 @@ String zambretti(float zCurrent) {
         else if (trend < 0) result = zForecast[zFalling[index]];
         else                result = zForecast[zSteady[index]];
       }
-      lnRegr(rgX, rgY, rgAB, rgIdx);
+      rgLinear(rgIdx, rgX, rgY, rgAB);
       Serial.println(rgAB[0]);
       Serial.println(rgAB[1]);
+      Serial.println(rgAB[2]);
       result = result + " (" + String(rgAB[0], 2) + ")";
       // Set the next timer and store the pressure
       zNextTime += zDelay * 1000;
