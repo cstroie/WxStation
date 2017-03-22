@@ -119,10 +119,9 @@ RunningMedian rmHeap = RunningMedian(APRS_SNS_MAX);
 // Linear regression
 const int rgMax = 36;
 int rgIdx = 0;
-float rgX[rgMax];
+int rgCnt = 0;
 float rgY[rgMax];
 //float rgY[] = {1974, 1828, 1709, 1639, 1526, 1488, 1442, 1393, 1361, 1354, 1355, 1316, 1250, 1208, 1245, 1242, 1250, 1328, 1370, 1335, 1298, 1210, 1167, 1125, 1120, 1153, 1271, 1156, 1068, 988, 917, 865, 836, 801, 790, 82};
-//float rgX[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35};
 float rgAB[] = {0, 0, 0};
 
 // Sensors
@@ -472,46 +471,44 @@ void aprsSendPosition(String comment) {
   @param x timestamp
   @param y current value
 */
-void rgAdd(float x, float y) {
-  if (rgIdx == rgMax) {
-    int s = sizeof(rgX[0]);
-    memmove(rgX, rgX + s, (rgIdx - 1) * s);
-    memmove(rgY, rgY + s, (rgIdx - 1) * s);
-    rgX[rgIdx - 1] = x;
-    rgY[rgIdx - 1] = y;
-  }
-  else {
-    rgX[rgIdx] = x;
-    rgY[rgIdx] = y;
-    rgIdx++;
-  }
+void rgAdd(float y) {
+  rgY[rgIdx] = y;
+  rgIdx++;
+  if (rgIdx >= rgMax) rgIdx = 0; // wrap around
+  if (rgCnt < rgMax) rgCnt++;
 }
 
-void rgLinear(int n, float *px, float *py, float *ab) {
-  int i;
-  float denom, dy, r = (n - 1), x, y;
+void rgLinear() {
+  int i, iy = 0;
+  float denom, dy, x, y;
   float a1, a2, s, s1, s2, s3, s4;
 
+  if (rgCnt >= rgMax) iy = rgIdx;
+
   s1 = s2 = s3 = s4 = s = 0;
-  for (i = 0; i < n; i++) {
-    x = px[i];
-    y = py[i];
+  for (i = 0; i < rgCnt; i++) {
+    int j = i + iy;
+    if (j >= rgMax) j -= rgMax;
+    x = i;
+    y = rgY[j];
     s1 += x;
     s2 += x * x;
     s3 += y;
     s4 += x * y;
   }
-  if ((denom = n * s2 - s1 * s1)) {
+
+  if ((denom = rgCnt * s2 - s1 * s1)) {
     a1 = (s3 * s2 - s1 * s4) / denom;
-    a2 = (n  * s4 - s3 * s1) / denom;
-    for (i = 0; i < n; i++) {
-      dy = py[i] - (a2 * px[i] + a1);
+    a2 = (rgCnt * s4 - s3 * s1) / denom;
+    for (i = 0; i < rgCnt; i++) {
+      int j = i + iy;
+      if (j >= rgMax) j -= rgMax;
+      dy = rgY[j] - (a2 * i + a1);
       s += dy * dy;
     }
-    s = sqrt(s / r);
-    ab[0] = a2;
-    ab[1] = a1;
-    ab[2] = s;
+    rgAB[0] = a2;
+    rgAB[1] = a1;
+    rgAB[2] = sqrt(s / (rgCnt - 1));
   }
 }
 
@@ -532,7 +529,7 @@ void zPrevPres(float pres) {
   @return the Zambretti forecast
 */
 String zambretti(float zCurrent) {
-  rgAdd((int)(millis() / 60000), zCurrent);
+  rgAdd(zCurrent);
   String result = "";
   if (zNextTime == 0) {
     // First run, set the timeout to the next hour
@@ -563,7 +560,7 @@ String zambretti(float zCurrent) {
         else if (trend < 0) result = zForecast[zFalling[index]];
         else                result = zForecast[zSteady[index]];
       }
-      rgLinear(rgIdx, rgX, rgY, rgAB);
+      rgLinear();
       Serial.println(rgAB[0]);
       Serial.println(rgAB[1]);
       Serial.println(rgAB[2]);
