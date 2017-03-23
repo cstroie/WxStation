@@ -55,13 +55,13 @@
 // Device name
 #ifdef DEVEL
 String NODENAME = "DevNode";
-String VERSION = "0.1";
+String LC_NODENAME = "devnode";
+String VERSION = "0.3";
 #else
 String NODENAME = "WxSta";
-String VERSION = "0.3.2";
+String LC_NODENAME = "wxsta";
+String VERSION = "0.3.3";
 #endif
-String LC_NODENAME = NODENAME;
-
 
 // NTP
 const int TZ = 0;
@@ -98,6 +98,7 @@ const int  APRS_PASSCODE = -1;
 String APRS_LOCATION = "4427.67N/02608.03E";
 const int ALTI = 83; // meters
 #endif
+String APRS_TARGET = ">APRS,TCPIP*:";
 double ALTI_CORR = pow((double)(1.0 - 2.25577e-5 * ALTI), (double)(-5.25588));
 float ALTIF = ALTI * 3.28084;
 const int APRS_SNS_MAX = 5; // x SNS_INTERVAL
@@ -141,7 +142,7 @@ ADC_MODE(ADC_VCC);
 // Zambretti forecaster
 int zBaroTop   = 105000;
 int zBaroBot   = 95000;
-int zThreshold = 50;
+int zThreshold = 100;
 int zDelay = 3600;
 unsigned long zNextTime = 0;
 float zPrevious[] = {0, 0, 0}; // last 1, 2 and 3 hours
@@ -165,7 +166,9 @@ int zFalling[] = {25, 25, 25, 25, 25, 25, 25, 25, 23, 23, 21, 20, 17, 14, 7, 3, 
 */
 void showWiFi() {
   if (WiFi.isConnected()) {
-    String text = "\nWiFi connected to ";
+    String text;
+    text.reserve(250);
+    text  = "\nWiFi connected to ";
     text += WiFi.SSID();
     text += " on channel ";
     text += WiFi.channel();
@@ -183,6 +186,28 @@ void showWiFi() {
   }
 }
 
+/** MQTT publishing wrapper, using strings, with retain flag on
+
+  @param topic the MQTT topic
+  @param payload the MQTT message to send to topic
+  @return the publishig status
+*/
+boolean mqttPubRetain(const String &topic, const String &payload) {
+  yield();
+  return MQTT_Client.publish(topic.c_str(), payload.c_str(), true);
+}
+
+/** MQTT publishing wrapper, using strings
+
+  @param topic the MQTT topic
+  @param payload the MQTT message to send to topic
+  @return the publishig status
+*/
+boolean mqttPub(const String &topic, const String &payload) {
+  yield();
+  return MQTT_Client.publish(topic.c_str(), payload.c_str(), false);
+}
+
 /**
   Try to reconnect to MQTT server
 
@@ -194,14 +219,14 @@ boolean mqttReconnect() {
 #endif
   if (MQTT_Client.connect(MQTT_ID.c_str())) {
     // Publish the connection report
-    MQTT_Client.publish(String(MQTT_REPORT_WIFI + "/hostname").c_str(), WiFi.hostname().c_str(), true);
-    MQTT_Client.publish(String(MQTT_REPORT_WIFI + "/mac").c_str(), WiFi.macAddress().c_str(), true);
-    MQTT_Client.publish(String(MQTT_REPORT_WIFI + "/ssid").c_str(), WiFi.SSID().c_str(), true);
-    MQTT_Client.publish(String(MQTT_REPORT_WIFI + "/rssi").c_str(), String(WiFi.RSSI()).c_str(), true);
-    MQTT_Client.publish(String(MQTT_REPORT_WIFI + "/ip").c_str(), WiFi.localIP().toString().c_str(), true);
-    MQTT_Client.publish(String(MQTT_REPORT_WIFI + "/gw").c_str(), WiFi.gatewayIP().toString().c_str(), true);
+    mqttPubRetain(MQTT_REPORT_WIFI + "/hostname", WiFi.hostname());
+    mqttPubRetain(MQTT_REPORT_WIFI + "/mac",      WiFi.macAddress());
+    mqttPubRetain(MQTT_REPORT_WIFI + "/ssid",     WiFi.SSID());
+    mqttPubRetain(MQTT_REPORT_WIFI + "/rssi",     String(WiFi.RSSI()));
+    mqttPubRetain(MQTT_REPORT_WIFI + "/ip",       WiFi.localIP().toString());
+    mqttPubRetain(MQTT_REPORT_WIFI + "/gw",       WiFi.gatewayIP().toString());
     // Subscribe
-    MQTT_Client.subscribe(String(MQTT_CMD + "/#").c_str());
+    MQTT_Client.subscribe((MQTT_CMD + "/#").c_str());
     // TODO
     //MQTT_Client.subscribe("sensor/#");
 #ifdef DEBUG
@@ -263,9 +288,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Feedback notification when SoftAP is started
 */
 void wifiCallback(WiFiManager *wifiMgr) {
-  String strMsg = "Connect to ";
-  strMsg += wifiMgr->getConfigPortalSSID();
-  Serial.println(strMsg);
+  String text;
+  text.reserve(50);
+  text  = "Connect to ";
+  text += wifiMgr->getConfigPortalSSID();
+  Serial.println(text);
 }
 
 /**
@@ -276,7 +303,9 @@ void wifiCallback(WiFiManager *wifiMgr) {
 */
 String zeroPad(float x, int digits) {
   long y = (long)x;
-  String result = String(y);
+  String result;
+  result.reserve(20);
+  result = y;
   String pad = "000000000";
   if (result.length() < digits) {
     pad = pad.substring(0, digits - result.length());
@@ -290,12 +319,35 @@ String zeroPad(float x, int digits) {
   return result;
 }
 
+void aprsDebug(const String &pkt) {
+  String text;
+  text.reserve(200);
+  text  = "APRS: ";
+  text += pkt;
+  Serial.println(text);
+}
+
+void aprsSend(const String &pkt) {
+  APRS_Client.println(pkt);
+  yield();
+#ifdef DEBUG
+  Serial.print("APRS: ");
+  Serial.println(pkt);
+#endif
+}
+
 /**
   Return time in APRS format: DDHHMMz
 */
 String aprsTime() {
   time_t moment = now();
-  return zeroPad(day(moment), 2) + zeroPad(hour(moment), 2) + zeroPad(minute(moment), 2) + "z";
+  String result;
+  result.reserve(20);
+  result  = zeroPad(day(moment), 2);
+  result += zeroPad(hour(moment), 2);
+  result += zeroPad(minute(moment), 2);
+  result += "z";
+  return result;
 }
 
 /**
@@ -304,11 +356,17 @@ String aprsTime() {
 
 */
 void aprsAuthenticate() {
-  String pkt = "user " + APRS_CALLSIGN + " pass " + APRS_PASSCODE + " vers " + NODENAME + " " + VERSION;
-  APRS_Client.println(pkt);
-#ifdef DEBUG
-  Serial.println("APRS: " + pkt);
-#endif
+  String pkt;
+  pkt.reserve(200);
+  pkt  = "user ";
+  pkt += APRS_CALLSIGN;
+  pkt += " pass ";
+  pkt += APRS_PASSCODE;
+  pkt += " vers ";
+  pkt += NODENAME;
+  pkt += " ";
+  pkt += VERSION;
+  aprsSend(pkt);
 }
 
 /**
@@ -324,43 +382,40 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
   // Temperature will be in Fahrenheit
   float fahr = temp * 9 / 5 + 32;
   // Compose the APRS packet
-  String pkt = APRS_CALLSIGN;
-  pkt = pkt + ">APRS,TCPIP*:";
-  pkt = pkt + "@" + aprsTime();
-  pkt = pkt + APRS_LOCATION;
-  // Wind
-  pkt = pkt + "_.../...g...";
+  String pkt;
+  pkt.reserve(200);
+  pkt  = APRS_CALLSIGN;
+  pkt += APRS_TARGET;
+  pkt += "@";
+  pkt += aprsTime();
+  pkt += APRS_LOCATION;
+  // Wind (unavailable)
+  pkt += "_.../...g...";
   // Temperature
-  if (temp >= -273.15) {
-    pkt = pkt + "t" + zeroPad(fahr, 3);
-  }
-  else {
-    pkt = pkt + "t...";
-  }
+  pkt += "t";
+  if (temp >= -273.15) pkt += zeroPad(fahr, 3);
+  else                 pkt += "...";
   // Humidity
   if (hmdt >= 0) {
-    if (hmdt == 100) {
-      pkt = pkt + "h00";
-    }
-    else {
-      pkt = pkt + "h" + zeroPad(hmdt, 2);
-    }
+    pkt += "h";
+    if (hmdt == 100) pkt += "00";
+    else             pkt += zeroPad(hmdt, 2);
   }
   // Athmospheric pressure
   if (pres >= 0) {
-    pkt = pkt + "b" + zeroPad(pres / 10, 5);
+    pkt += "b";
+    pkt += zeroPad(pres / 10, 5);
   }
   // Illuminance, if valid
+  // For the SUN, there is an approximate conversion of 0.0079 W/m2 per Lux
   if (lux >= 0) {
-    pkt = pkt + "L" + zeroPad(lux * 0.0079, 3);
+    pkt += "L";
+    pkt += zeroPad(lux * 0.0079, 3);
   }
   // Comment (device name)
-  pkt = pkt + NODENAME + "/" + VERSION;
+  pkt += NODENAME;
   // Send the packet
-  APRS_Client.println(pkt);
-#ifdef DEBUG
-  Serial.println("APRS: " + pkt);
-#endif
+  aprsSend(pkt);
   // Try to get and send the Zambretti forecast
   aprsSendStatus(zambretti(pres));
 }
@@ -380,73 +435,87 @@ void aprsSendTelemetry(int vcc, int rssi, int heap, unsigned int luxVis, unsigne
   // Increment the telemetry sequence number, reset it if exceeds 999
   aprsSeq += 1;
   if (aprsSeq > 999) aprsSeq = 0;
-  // Send the setup, if the sequence number is 0
-  if (aprsSeq == 0) aprsSendTelemetrySetup();
+  // Send the telemetry setup on power up (5 minutes) or if the sequence number is 0
+  if ((aprsSeq == 0) or (millis() < 300000UL)) aprsSendTelemetrySetup();
   // Compose the APRS packet
-  String pkt = APRS_CALLSIGN +
-               ">APRS,TCPIP*:T#" +
-               zeroPad(aprsSeq, 3) + "," +
-               zeroPad((vcc - 2500) / 4, 3) + "," +
-               zeroPad(-rssi, 3) + "," +
-               zeroPad(heap / 200, 3) + "," +
-               zeroPad(luxVis / 256, 3) + "," +
-               zeroPad(luxIrd / 256, 3) + "," +
-               String(bits, BIN);
+  String pkt;
+  pkt.reserve(200);
+  pkt  = APRS_CALLSIGN;
+  pkt += APRS_TARGET;
+  pkt += "T#";
+  pkt += zeroPad(aprsSeq, 3);
+  pkt += ",";
+  pkt += zeroPad((vcc - 2500) / 4, 3);
+  pkt += ",";
+  pkt += zeroPad(-rssi, 3);
+  pkt += ",";
+  pkt += zeroPad(heap / 200, 3);
+  pkt += ",";
+  pkt += zeroPad(luxVis / 256, 3);
+  pkt += ",";
+  pkt += zeroPad(luxIrd / 256, 3);
+  pkt += ",";
+  pkt += String(bits, BIN);
   // Send the packet
-  APRS_Client.println(pkt);
-#ifdef DEBUG
-  Serial.println("APRS: " + pkt);
-#endif
+  aprsSend(pkt);
 }
 
 /**
   Send APRS telemetry setup
 */
 void aprsSendTelemetrySetup() {
+  // Space padding
+  char padCallSign[10];
+  sprintf(padCallSign, "%-9s", APRS_CALLSIGN.c_str());
+  // The packet header
+  String pktHeader;
+  pktHeader.reserve(50);
+  pktHeader  = APRS_CALLSIGN;
+  pktHeader += APRS_TARGET;
+  pktHeader += ":";
+  pktHeader += padCallSign;
+  // Compose the APRS packet
   String pkt;
-  String pad = String("         ").substring(APRS_CALLSIGN.length());
+  pkt.reserve(200);
   // Parameter names
-  pkt = APRS_CALLSIGN + ">APRS,TCPIP*::" + APRS_CALLSIGN + pad + ":PARM.Vcc,RSSI,Heap,IRd,Vis,B1,B2,B3,B4,B5,B6,B7,B8";
-  APRS_Client.println(pkt);
-#ifdef DEBUG
-  Serial.println("APRS: " + pkt);
-#endif
+  pkt  = pktHeader;
+  pkt += ":PARM.Vcc,RSSI,Heap,IRed,Visb,PROBE,ATMO,LUX,SAT,BAT,B6,B7,B8";
+  aprsSend(pkt);
   // Equtions
-  pkt = APRS_CALLSIGN + ">APRS,TCPIP*::" + APRS_CALLSIGN + pad + ":EQNS.0,0.004,2.5,0,-1,0,0,200,0,0,256,0,0,256,0";
-  APRS_Client.println(pkt);
-#ifdef DEBUG
-  Serial.println("APRS: " + pkt);
-#endif
+  pkt  = pktHeader;
+  pkt += ":EQNS.0,0.004,2.5,0,-1,0,0,200,0,0,256,0,0,256,0";
+  aprsSend(pkt);
   // Units
-  pkt = APRS_CALLSIGN + ">APRS,TCPIP*::" + APRS_CALLSIGN + pad + ":UNIT.V,dBm,Bytes,units,units,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A";
-  APRS_Client.println(pkt);
-#ifdef DEBUG
-  Serial.println("APRS: " + pkt);
-#endif
+  pkt  = pktHeader;
+  pkt += ":UNIT.V,dBm,Bytes,units,units,prb,on,on,sat,low,N/A,N/A,N/A";
+  aprsSend(pkt);
   // Bit sense and project name
-  pkt = APRS_CALLSIGN + ">APRS,TCPIP*::" + APRS_CALLSIGN + pad + ":BITS.11111111," + NODENAME + "/" + VERSION;
-  APRS_Client.println(pkt);
-#ifdef DEBUG
-  Serial.println("APRS: " + pkt);
-#endif
+  pkt  = pktHeader;
+  pkt += ":BITS.11111111,";
+  pkt += NODENAME;
+  pkt += "/";
+  pkt += VERSION;
+  aprsSend(pkt);
 }
 
 /**
   Send APRS status
-  FW0690>APRS,TCPIP*:>13:06 Fine weather
+  FW0690>APRS,TCPIP*:>Fine weather
 
   @param message the status message to send
 */
-void aprsSendStatus(String message) {
+void aprsSendStatus(const String &message) {
   // Send only if the message is not empty
   if (message != "") {
     // Compose the APRS packet
-    String pkt = APRS_CALLSIGN + ">APRS,TCPIP*:>" + message;
+    String pkt;
+    pkt.reserve(200);
+    pkt  = APRS_CALLSIGN;
+    pkt += APRS_TARGET;
+    pkt += ">";
+    pkt += message;
     // Send the packet
-    APRS_Client.println(pkt);
-#ifdef DEBUG
-    Serial.println("APRS: " + pkt);
-#endif
+    aprsSend(pkt);
   }
 }
 
@@ -456,35 +525,42 @@ void aprsSendStatus(String message) {
 
   @param comment the comment to append
 */
-void aprsSendPosition(String comment) {
+void aprsSendPosition(const String &comment) {
   // Compose the APRS packet
-  String pkt = APRS_CALLSIGN + ">APRS,TCPIP*:!" + APRS_LOCATION + "/000/000/A=" + zeroPad(ALTIF, 6) + comment;
+  String pkt;
+  pkt.reserve(200);
+  pkt  = APRS_CALLSIGN;
+  pkt += APRS_TARGET;
+  pkt += "!";
+  pkt += APRS_LOCATION;
+  pkt += "/000/000/A=";
+  pkt += zeroPad(ALTIF, 6);
+  pkt += comment;
   // Send the packet
-  APRS_Client.println(pkt);
-#ifdef DEBUG
-  Serial.println("APRS: " + pkt);
-#endif
+  aprsSend(pkt);
 }
 
 /**
   Store previous athmospheric pressures for each 5 minute in the last 3 hours
-  @param x timestamp
   @param y current value
 */
 void rgAdd(float y) {
   rgY[rgIdx] = y;
   rgIdx++;
   if (rgIdx >= rgMax) rgIdx = 0; // wrap around
-  if (rgCnt < rgMax) rgCnt++;
+  if (rgCnt < rgMax) rgCnt++;    // count the stored values
 }
 
+/**
+  Determine the linear regression
+*/
 void rgLinear() {
   int i, iy = 0;
   float denom, dy, x, y;
   float a1, a2, s, s1, s2, s3, s4;
-
+  // Circular buffer, moving cursor
   if (rgCnt >= rgMax) iy = rgIdx;
-
+  // Compute the sums
   s1 = s2 = s3 = s4 = s = 0;
   for (i = 0; i < rgCnt; i++) {
     int j = i + iy;
@@ -496,7 +572,7 @@ void rgLinear() {
     s3 += y;
     s4 += x * y;
   }
-
+  // Find alpha, beta and std deviation
   if ((denom = rgCnt * s2 - s1 * s1)) {
     a1 = (s3 * s2 - s1 * s4) / denom;
     a2 = (rgCnt * s4 - s3 * s1) / denom;
@@ -529,6 +605,7 @@ void zPrevPres(float pres) {
   @return the Zambretti forecast
 */
 String zambretti(float zCurrent) {
+  // Keep the current value in the circular buffer
   rgAdd(zCurrent);
   String result = "";
   if (zNextTime == 0) {
@@ -542,12 +619,13 @@ String zambretti(float zCurrent) {
       int trend = 0;
       int index = 0;
       float range = zBaroTop - zBaroBot;
-      float pres = zCurrent;
+      float pres  = zCurrent;
       // Get the trend
-      if      ((zCurrent > zPrevious[zPrevCount - 1] ) and (zCurrent - zPrevious[zPrevCount - 1] > zThreshold)) trend = 1;
+      if      ((zCurrent > zPrevious[zPrevCount - 1] ) and (zCurrent - zPrevious[zPrevCount - 1] > zThreshold)) trend =  1;
       else if ((zCurrent < zPrevious[zPrevCount - 1] ) and (zPrevious[zPrevCount - 1] - zCurrent > zThreshold)) trend = -1;
-      // Check if summer
-      if ((month() >= 4) and (month() <= 9)) {
+      // Corrections for summer
+      int mon = month();
+      if ((mon >= 4) and (mon <= 9)) {
         if      (trend > 0) pres += range * 0.07;
         else if (trend < 0) pres -= range * 0.07;
       }
@@ -560,11 +638,12 @@ String zambretti(float zCurrent) {
         else if (trend < 0) result = zForecast[zFalling[index]];
         else                result = zForecast[zSteady[index]];
       }
+      // Compute the linear regression
       rgLinear();
       Serial.println(rgAB[0]);
       Serial.println(rgAB[1]);
       Serial.println(rgAB[2]);
-      result = result + " (" + String(rgAB[0], 2) + ")";
+      result = result + " (" + String(rgAB[0], 6) + ")";
       // Set the next timer and store the pressure
       zNextTime += zDelay * 1000;
       zPrevPres(zCurrent);
@@ -578,8 +657,6 @@ void setup() {
   Serial.println();
   Serial.begin(115200);
   Serial.println(NODENAME + "/" + VERSION + " [" + APRS_CALLSIGN + "] " + __DATE__);
-  // Get the lowercase name
-  LC_NODENAME.toLowerCase();
 
   // Try to connect to WiFi
   WiFiManager wifiManager;
@@ -621,14 +698,9 @@ void setup() {
   atmo.settings.pressOverSample = 1;
   atmo.settings.humidOverSample = 1;
   delay(10);
-  if (atmo.begin() == 0x60) {
-    atmo_ok = true;
-    Serial.println("BME280 sensor detected.");
-  }
-  else {
-    atmo_ok = false;
-    Serial.println("BME280 sensor missing.");
-  }
+  atmo_ok = atmo.begin() == 0x60;
+  if (atmo_ok) Serial.println("BME280 sensor detected.");
+  else         Serial.println("BME280 sensor missing.");
 
   // TSL2561
   light.begin();
@@ -648,7 +720,6 @@ void setup() {
   // Initialize the random number generator and set the APRS telemetry start sequence
   if (timeStatus() != timeNotSet) randomSeed(now());
   aprsSeq = random(1000);
-  yield();
 
   // Start the sensor timer
   delaySNS.start(SNS_INTERVAL, AsyncDelay::MILLIS);
@@ -667,26 +738,45 @@ void loop() {
 
   // Read the sensors and publish telemetry
   if (delaySNS.isExpired()) {
-    // Check if we need to send the APRS data
-    APRS_SNS_COUNT++;
-    if (APRS_SNS_COUNT > APRS_SNS_MAX) {
-      APRS_SNS_COUNT = 1;
-    }
+    // Count to check if we need to send the APRS data
+    if (APRS_SNS_COUNT++ > APRS_SNS_MAX) APRS_SNS_COUNT = 1;
+    // Set the telemetry bits
+#ifdef DEVEL
+    int APRS_BITS = B10000000;
+#else
+    int APRS_BITS = B00000000;
+#endif
 
     // Read TSL2561
     // TODO Adapt the shutter
     unsigned int luxVis = 0, luxIrd = 0;
     double lux = -1;
-    if (light.getData(luxVis, luxIrd)) {
-      boolean good = light.getLux(gain, ms, luxVis, luxIrd, lux);
-      if (good) {
-        // Send to MQTT
-        MQTT_Client.publish(String(MQTT_SENSOR + "/illuminance").c_str(), String(lux, 2).c_str());
-        MQTT_Client.publish(String(MQTT_SENSOR + "/visible").c_str(), String(luxVis).c_str());
-        MQTT_Client.publish(String(MQTT_SENSOR + "/infrared").c_str(), String(luxIrd).c_str());
+    if (!light_ok) {
+      // Try to reinitialize the sensor
+      light.begin();
+      unsigned char ID;
+      if (light.getID(ID)) {
+        light.setTiming(gain, shtr, ms);
+        light.setPowerUp();
+        light_ok = true;
       }
-      else {
-        lux = -1;
+    }
+    if (light_ok) {
+      // Set the bit to show the sensor is present
+      APRS_BITS |= B00100000;
+      if (light.getData(luxVis, luxIrd)) {
+        boolean good = light.getLux(gain, ms, luxVis, luxIrd, lux);
+        if (good) {
+          // Send to MQTT
+          mqttPub(MQTT_SENSOR + "/illuminance", String(lux, 2));
+          mqttPub(MQTT_SENSOR + "/visible",     String(luxVis));
+          mqttPub(MQTT_SENSOR + "/infrared",    String(luxIrd));
+        }
+        else {
+          lux = -1;
+          // Set the bit to show the sensor is saturated
+          APRS_BITS |= B00010000;
+        }
       }
     }
     // Running Median
@@ -696,55 +786,63 @@ void loop() {
     yield();
 
     // Read BME280
-    // TODO fake values if DEVEL
     float temp, pres, slvl, hmdt, dewp;
+    if (!atmo_ok) {
+      // Try to reinitialize the sensor
+      atmo_ok = atmo.begin() == 0x60;
+    }
     if (atmo_ok) {
+      // Set the bit to show the sensor is present
+      APRS_BITS |= B01000000;
       // Get the weather parameters
       temp = atmo.readTempC();
       pres = atmo.readFloatPressure();
       slvl = pres * ALTI_CORR;
       hmdt = atmo.readFloatHumidity();
-      dewp = 243.04 * (log(hmdt / 100.0) + ((17.625 * temp) / (243.04 + temp))) / (17.625 - log(hmdt / 100.0) - ((17.625 * temp) / (243.04 + temp)));
+      dewp = 243.04 *
+             (log(hmdt / 100.0) + ((17.625 * temp) / (243.04 + temp))) /
+             (17.625 - log(hmdt / 100.0) - ((17.625 * temp) / (243.04 + temp)));
       // Running Median
       rmTemp.add(temp);
       rmHmdt.add(hmdt);
       rmPres.add(slvl);
       // Send to MQTT
-      MQTT_Client.publish(String(MQTT_SENSOR + "/temperature").c_str(), String(temp, 2).c_str());
-      MQTT_Client.publish(String(MQTT_SENSOR + "/humidity").c_str(), String(hmdt, 2).c_str());
-      MQTT_Client.publish(String(MQTT_SENSOR + "/dewpoint").c_str(), String(dewp, 2).c_str());
-      MQTT_Client.publish(String(MQTT_SENSOR + "/pressure").c_str(), String(pres / 100, 2).c_str());
-      MQTT_Client.publish(String(MQTT_SENSOR + "/sealevel").c_str(), String(slvl / 100, 2).c_str());
+      mqttPub(MQTT_SENSOR + "/temperature", String(temp, 2));
+      mqttPub(MQTT_SENSOR + "/humidity",    String(hmdt, 2));
+      mqttPub(MQTT_SENSOR + "/dewpoint",    String(dewp, 2));
+      mqttPub(MQTT_SENSOR + "/pressure",    String(pres / 100, 2));
+      mqttPub(MQTT_SENSOR + "/sealevel",    String(slvl / 100, 2));
     }
-    yield();
 
     // Various telemetry
     int rssi = WiFi.RSSI();
     int heap = ESP.getFreeHeap();
-    int vcc = ESP.getVcc();
+    int vcc  = ESP.getVcc();
+    if (vcc < 3000) {
+      // Set the bit to show the battery is low
+      APRS_BITS |= B00001000;
+    }
     // Running Median
     rmVcc.add(vcc);
     rmRSSI.add(rssi);
     rmHeap.add(heap);
     // Send to MQTT
-    MQTT_Client.publish(String(MQTT_REPORT_WIFI + "/rssi").c_str(), String(rssi).c_str());
-    MQTT_Client.publish(String(MQTT_REPORT + "/uptime").c_str(), String(millis() / 1000).c_str());
-    MQTT_Client.publish(String(MQTT_REPORT + "/uptime/text").c_str(), NTP.getUptimeString().c_str());
-    MQTT_Client.publish(String(MQTT_REPORT + "/heap").c_str(), String(heap).c_str());
-    MQTT_Client.publish(String(MQTT_REPORT + "/vcc").c_str(), String((float)vcc / 1000, 3).c_str());
-    yield();
+    mqttPub(MQTT_REPORT_WIFI + "/rssi",   String(rssi));
+    mqttPub(MQTT_REPORT + "/uptime",      String(millis() / 1000));
+    mqttPub(MQTT_REPORT + "/uptime/text", NTP.getUptimeString());
+    mqttPub(MQTT_REPORT + "/heap",        String(heap));
+    mqttPub(MQTT_REPORT + "/vcc",         String((float)vcc / 1000, 3));
 
     // APRS (after the first minute, then every APRS_SNS_MAX minutes)
     if (APRS_SNS_COUNT == 1) {
       if (APRS_Client.connect(APRS_SERVER.c_str(), APRS_PORT)) {
-        yield();
         aprsAuthenticate();
         //aprsSendPosition(" WxStaProbe");
-        if (atmo_ok) {
-          aprsSendWeather(rmTemp.getMedian(), rmHmdt.getMedian(), rmPres.getMedian(), rmLux.getMedian());
-        }
-        aprsSendTelemetry(rmVcc.getMedian(), rmRSSI.getMedian(), rmHeap.getMedian(), rmVisi.getMedian(), rmIRed.getMedian(), 0);
-        yield();
+        if (atmo_ok) aprsSendWeather(rmTemp.getMedian(), rmHmdt.getMedian(), rmPres.getMedian(), rmLux.getMedian());
+        //aprsSendWeather(16.3, 61.3, 102456, -1);
+        aprsSendTelemetry(rmVcc.getMedian(), rmRSSI.getMedian(), rmHeap.getMedian(), rmVisi.getMedian(), rmIRed.getMedian(), APRS_BITS);
+        //aprsSendStatus("Fine weather");
+        //aprsSendTelemetrySetup();
         APRS_Client.stop();
       };
     }
