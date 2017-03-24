@@ -56,12 +56,13 @@
 #ifdef DEVEL
 String NODENAME = "DevNode";
 String LC_NODENAME = "devnode";
-String VERSION = "0.3";
+String VERSION = "0.4";
 #else
 String NODENAME = "WxSta";
 String LC_NODENAME = "wxsta";
-String VERSION = "0.3.3";
+String VERSION = "0.3.4";
 #endif
+bool PROBE = true;    // True if the station is being probed
 
 // NTP
 const int TZ = 0;
@@ -85,81 +86,97 @@ PubSubClient MQTT_Client(WiFi_Client);
 AsyncDelay delayMQTT;
 
 // APRS parameters
-String APRS_SERVER = "cwop5.aprs.net";
-const int APRS_PORT = 14580;
+char aprsServer[] = "cwop5.aprs.net";
+int aprsPort = 14580;
 #ifdef DEVEL
-String APRS_CALLSIGN = "FW0727";
-const int  APRS_PASSCODE = -1;
-String APRS_LOCATION = "4455.29N/02527.08E";
-const int ALTI = 282; // meters
+char aprsCallSign[] = "FW0727";
+int  aprsPassCode = -1;
+char aprsLat[] = "4455.29N";
+char aprsLon[] = "02527.08E";
+char aprsSymbolStart = '@';
+char aprsSymbolTable = '/';
+char aprsSymbolStation = '_';
+int altMeters = 282;
 #else
-String APRS_CALLSIGN = "FW0690";
-const int  APRS_PASSCODE = -1;
-String APRS_LOCATION = "4427.67N/02608.03E";
-const int ALTI = 83; // meters
+char aprsCallSign[] = "FW0690";
+int  aprsPassCode = -1;
+char aprsLat[] = "4427.67N";
+char aprsLon[] = "02608.03E";
+char aprsSymbolStart = '@';
+char aprsSymbolTable = '/';
+char aprsSymbolStation = '_';
+int altMeters = 83;
 #endif
-String APRS_TARGET = ">APRS,TCPIP*:";
-double ALTI_CORR = pow((double)(1.0 - 2.25577e-5 * ALTI), (double)(-5.25588));
-float ALTIF = ALTI * 3.28084;
-const int APRS_SNS_MAX = 5; // x SNS_INTERVAL
-int APRS_SNS_COUNT = 0;
-unsigned int aprsSeq = 0;
+String aprsHeader;
+String aprsLocation;
+String aprsPath = ">APRS,TCPIP*:";
+float altCorr = pow((float)(1.0 - 2.25577e-5 * altMeters), (float)(-5.25588));
+float altFeet = altMeters * 3.28084;  // Altitude in feet
+int aprsTlmBits = B00000000;   // Telemetry bits
+// Reports and measurements
+const int aprsRprtHour = 10;  // Number of APRS reports per hour
+const int aprsMsrmMax = 5;    // Number of measurements per report (keep even)
+int aprsMsrmCount = 0;        // Measurements counter
+int aprsTlmSeq = 0;           // Telemetry sequence mumber
+// The APRS connection client
 WiFiClient APRS_Client;
 
 // Statistics
-RunningMedian rmTemp = RunningMedian(APRS_SNS_MAX);
-RunningMedian rmHmdt = RunningMedian(APRS_SNS_MAX);
-RunningMedian rmPres = RunningMedian(APRS_SNS_MAX);
-RunningMedian rmLux  = RunningMedian(APRS_SNS_MAX);
-RunningMedian rmVisi = RunningMedian(APRS_SNS_MAX);
-RunningMedian rmIRed = RunningMedian(APRS_SNS_MAX);
-RunningMedian rmVcc  = RunningMedian(APRS_SNS_MAX);
-RunningMedian rmRSSI = RunningMedian(APRS_SNS_MAX);
-RunningMedian rmHeap = RunningMedian(APRS_SNS_MAX);
-
-// Linear regression
-const int rgMax = 36;
-int rgIdx = 0;
-int rgCnt = 0;
-float rgY[rgMax];
-//float rgY[] = {1974, 1828, 1709, 1639, 1526, 1488, 1442, 1393, 1361, 1354, 1355, 1316, 1250, 1208, 1245, 1242, 1250, 1328, 1370, 1335, 1298, 1210, 1167, 1125, 1120, 1153, 1271, 1156, 1068, 988, 917, 865, 836, 801, 790, 82};
-float rgAB[] = {0, 0, 0};
+RunningMedian rmTemp = RunningMedian(aprsMsrmMax);
+RunningMedian rmHmdt = RunningMedian(aprsMsrmMax);
+RunningMedian rmPres = RunningMedian(aprsMsrmMax);
+RunningMedian rmLux  = RunningMedian(aprsMsrmMax);
+RunningMedian rmVisi = RunningMedian(aprsMsrmMax);
+RunningMedian rmIRed = RunningMedian(aprsMsrmMax);
+RunningMedian rmVcc  = RunningMedian(aprsMsrmMax);
+RunningMedian rmRSSI = RunningMedian(aprsMsrmMax);
+RunningMedian rmHeap = RunningMedian(aprsMsrmMax);
 
 // Sensors
-const int SNS_INTERVAL  = 60 * 1000;
-BME280 atmo;
-bool atmo_ok = false;
-SFE_TSL2561 light;
-bool light_ok = false;
-boolean gain = false;
-unsigned char shtr = 1;
-unsigned int ms;
-AsyncDelay delaySNS;
+int snsDelay = 3600000UL / (aprsRprtHour * aprsMsrmMax);
+unsigned long snsNextTime = 0;  // The next time to read the sensors
+BME280 atmo;                    // The athmospheric sensor
+bool atmo_ok = false;           // The athmospheric sensor flag
+SFE_TSL2561 light;              // The illuminance sensor
+bool light_ok = false;          // The illuminance sensor flag
+boolean gain = false;           //    ~    ~    ~    ~    gain (true/false)
+unsigned char shtr = 1;         //    ~    ~    ~    ~    shutter (0, 1, 2)
+unsigned int ms;                //    ~    ~    ~    ~    integration timer
 
 // Voltage
 ADC_MODE(ADC_VCC);
 
 // Zambretti forecaster
-int zBaroTop   = 105000;
-int zBaroBot   = 95000;
-int zThreshold = 100;
-int zDelay = 3600;
-unsigned long zNextTime = 0;
-float zPrevious[] = {0, 0, 0}; // last 1, 2 and 3 hours
-int zPrevCount = 0;
+int zbBaroTop = 105000;       // Highest athmospheric pressure
+int zbBaroBot = 95000;        // Lowest athmospheric pressure
+int zbBaroTrs = 100;          // Pressure threshold
+const int zbHours = 3;        // Need the last 3 hours for forecast
+int zbDelay = 3600;           // Report hourly
+unsigned long zbNextTime = 0; // The next time to report, collect data till then
+// Forecast texts
+String zbFcast[] = {"Settled fine", "Fine weather", "Becoming fine", "Fine, becoming less settled", "Fine, possible showers",
+                    "Fairly fine, improving", "Fairly fine, possible showers early", "Fairly fine, showery later",
+                    "Showery early, improving", "Changeable, mending", "Fairly fine, showers likely",
+                    "Rather unsettled clearing later", "Unsettled, probably improving", "Showery, bright intervals",
+                    "Showery, becoming less settled", "Changeable, some rain", "Unsettled, short fine intervals",
+                    "Unsettled, rain later", "Unsettled, some rain", "Mostly very unsettled", "Occasional rain, worsening",
+                    "Rain at times, very unsettled", "Rain at frequent intervals", "Rain, very unsettled",
+                    "Stormy, may improve", "Stormy, much rain"
+                   };
+// Forecast selectors for rising, steady and falling trend
+int zbRs[] = {25, 25, 25, 24, 24, 19, 16, 12, 11, 9, 8, 6, 5, 2, 1, 1, 0, 0, 0, 0, 0, 0};
+int zbSt[] = {25, 25, 25, 25, 25, 25, 23, 23, 22, 18, 15, 13, 10, 4, 1, 1, 0, 0, 0, 0, 0, 0};
+int zbFl[] = {25, 25, 25, 25, 25, 25, 25, 25, 23, 23, 21, 20, 17, 14, 7, 3, 1, 1, 1, 0, 0, 0};
 
-String zForecast[] = {"Settled fine", "Fine weather", "Becoming fine", "Fine, becoming less settled", "Fine, possible showers",
-                      "Fairly fine, improving", "Fairly fine, possible showers early", "Fairly fine, showery later",
-                      "Showery early, improving", "Changeable, mending", "Fairly fine, showers likely",
-                      "Rather unsettled clearing later", "Unsettled, probably improving", "Showery, bright intervals",
-                      "Showery, becoming less settled", "Changeable, some rain", "Unsettled, short fine intervals",
-                      "Unsettled, rain later", "Unsettled, some rain", "Mostly very unsettled", "Occasional rain, worsening",
-                      "Rain at times, very unsettled", "Rain at frequent intervals", "Rain, very unsettled",
-                      "Stormy, may improve", "Stormy, much rain"
-                     };
-int zRising[]  = {25, 25, 25, 24, 24, 19, 16, 12, 11, 9, 8, 6, 5, 2, 1, 1, 0, 0, 0, 0, 0, 0};
-int zSteady[]  = {25, 25, 25, 25, 25, 25, 23, 23, 22, 18, 15, 13, 10, 4, 1, 1, 0, 0, 0, 0, 0, 0};
-int zFalling[] = {25, 25, 25, 25, 25, 25, 25, 25, 23, 23, 21, 20, 17, 14, 7, 3, 1, 1, 1, 0, 0, 0};
+// Linear regression computer
+const int rgMax = zbHours * aprsRprtHour; // The size of the circular buffer
+int rgIdx = 0;                            // Index in circular buffers
+int rgCnt = 0;                            // Counter of current values in buffer
+float rgY[rgMax];                         // The circular buffer
+//float rgY[] = {1974, 1828, 1709, 1639, 1526, 1488, 1442, 1393, 1361, 1354, 1355, 1316, 1250, 1208, 1245, 1242, 1250, 1328, 1370, 1335, 1298, 1210, 1167, 1125, 1120, 1153, 1271, 1156, 1068, 988, 917, 865, 836, 801, 790, 82};
+float rgAB[] = {0, 0, 0};                 // Coefficients: a, b and std dev in f(x)=ax+b
+
+
 
 /**
   Display the WiFi parameters
@@ -319,14 +336,6 @@ String zeroPad(float x, int digits) {
   return result;
 }
 
-void aprsDebug(const String &pkt) {
-  String text;
-  text.reserve(200);
-  text  = "APRS: ";
-  text += pkt;
-  Serial.println(text);
-}
-
 void aprsSend(const String &pkt) {
   APRS_Client.println(pkt);
   yield();
@@ -359,9 +368,9 @@ void aprsAuthenticate() {
   String pkt;
   pkt.reserve(200);
   pkt  = "user ";
-  pkt += APRS_CALLSIGN;
+  pkt += aprsCallSign;
   pkt += " pass ";
-  pkt += APRS_PASSCODE;
+  pkt += aprsPassCode;
   pkt += " vers ";
   pkt += NODENAME;
   pkt += " ";
@@ -379,18 +388,30 @@ void aprsAuthenticate() {
   @param lux illuminance
 */
 void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
+  String zbLR;
   // Temperature will be in Fahrenheit
   float fahr = temp * 9 / 5 + 32;
+  // Try to get and send the Zambretti forecast
+  int zbNumber = zbForecast(pres);
+  if (zbNumber >= 0) {
+    aprsSendStatus(zbFcast[zbNumber]);
+    zbLR.reserve(50);
+    zbLR  = " Eq: A=";
+    zbLR += String(rgAB[0], 6);
+    zbLR += ", B=";
+    zbLR += String(rgAB[1] / 100, 2);
+    zbLR += ", S=";
+    zbLR += String(rgAB[2], 6);
+  }
   // Compose the APRS packet
   String pkt;
   pkt.reserve(200);
-  pkt  = APRS_CALLSIGN;
-  pkt += APRS_TARGET;
+  pkt  = aprsHeader;
   pkt += "@";
   pkt += aprsTime();
-  pkt += APRS_LOCATION;
+  pkt += aprsLocation;
   // Wind (unavailable)
-  pkt += "_.../...g...";
+  pkt += ".../...g...";
   // Temperature
   pkt += "t";
   if (temp >= -273.15) pkt += zeroPad(fahr, 3);
@@ -413,11 +434,9 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
     pkt += zeroPad(lux * 0.0079, 3);
   }
   // Comment (device name)
-  pkt += NODENAME;
+  pkt += zbLR; //NODENAME;
   // Send the packet
   aprsSend(pkt);
-  // Try to get and send the Zambretti forecast
-  aprsSendStatus(zambretti(pres));
 }
 
 /**
@@ -433,17 +452,15 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
 */
 void aprsSendTelemetry(int vcc, int rssi, int heap, unsigned int luxVis, unsigned int luxIrd, byte bits) {
   // Increment the telemetry sequence number, reset it if exceeds 999
-  aprsSeq += 1;
-  if (aprsSeq > 999) aprsSeq = 0;
-  // Send the telemetry setup on power up (5 minutes) or if the sequence number is 0
-  if ((aprsSeq == 0) or (millis() < 300000UL)) aprsSendTelemetrySetup();
+  if (++aprsTlmSeq > 999) aprsTlmSeq = 0;
+  // Send the telemetry setup on power up (first 5 minutes) or if the sequence number is 0
+  if ((aprsTlmSeq == 0) or (millis() < 300000UL)) aprsSendTelemetrySetup();
   // Compose the APRS packet
   String pkt;
   pkt.reserve(200);
-  pkt  = APRS_CALLSIGN;
-  pkt += APRS_TARGET;
+  pkt  = aprsHeader;
   pkt += "T#";
-  pkt += zeroPad(aprsSeq, 3);
+  pkt += zeroPad(aprsTlmSeq, 3);
   pkt += ",";
   pkt += zeroPad((vcc - 2500) / 4, 3);
   pkt += ",";
@@ -466,12 +483,11 @@ void aprsSendTelemetry(int vcc, int rssi, int heap, unsigned int luxVis, unsigne
 void aprsSendTelemetrySetup() {
   // Space padding
   char padCallSign[10];
-  sprintf(padCallSign, "%-9s", APRS_CALLSIGN.c_str());
+  sprintf(padCallSign, "%-9s", aprsCallSign);
   // The packet header
   String pktHeader;
   pktHeader.reserve(50);
-  pktHeader  = APRS_CALLSIGN;
-  pktHeader += APRS_TARGET;
+  pktHeader  = aprsHeader;
   pktHeader += ":";
   pktHeader += padCallSign;
   // Compose the APRS packet
@@ -491,7 +507,7 @@ void aprsSendTelemetrySetup() {
   aprsSend(pkt);
   // Bit sense and project name
   pkt  = pktHeader;
-  pkt += ":BITS.11111111,";
+  pkt += ":BITS.10011111,";
   pkt += NODENAME;
   pkt += "/";
   pkt += VERSION;
@@ -510,8 +526,7 @@ void aprsSendStatus(const String &message) {
     // Compose the APRS packet
     String pkt;
     pkt.reserve(200);
-    pkt  = APRS_CALLSIGN;
-    pkt += APRS_TARGET;
+    pkt  = aprsHeader;
     pkt += ">";
     pkt += message;
     // Send the packet
@@ -520,7 +535,7 @@ void aprsSendStatus(const String &message) {
 }
 
 /**
-  Send APRS position and alitude
+  Send APRS position
   FW0690>APRS,TCPIP*:!DDMM.hhN/DDDMM.hhW$comments
 
   @param comment the comment to append
@@ -529,22 +544,36 @@ void aprsSendPosition(const String &comment) {
   // Compose the APRS packet
   String pkt;
   pkt.reserve(200);
-  pkt  = APRS_CALLSIGN;
-  pkt += APRS_TARGET;
-  pkt += "!";
-  pkt += APRS_LOCATION;
-  pkt += "/000/000/A=";
-  pkt += zeroPad(ALTIF, 6);
+  pkt  = aprsHeader;
+  pkt += "=";
+  pkt += aprsLocation;
   pkt += comment;
   // Send the packet
   aprsSend(pkt);
 }
 
 /**
-  Store previous athmospheric pressures for each 5 minute in the last 3 hours
+  Send APRS position and alitude
+  FW0690>APRS,TCPIP*:!DDMM.hhN/DDDMM.hhW/000/000/A=000974comments
+
+  @param comment the comment to append
+*/
+void aprsSendAltitude(const String &comment) {
+  // Compose the APRS packet
+  String pkt;
+  pkt.reserve(200);
+  pkt  = "/000/000/A=";
+  pkt += zeroPad(altFeet, 6);
+  pkt += comment;
+  // Send the packet
+  aprsSendPosition(pkt);
+}
+
+/**
+  Store previous athmospheric pressures for each report in the last zbHours hours
   @param y current value
 */
-void rgAdd(float y) {
+void rgStore(float y) {
   rgY[rgIdx] = y;
   rgIdx++;
   if (rgIdx >= rgMax) rgIdx = 0; // wrap around
@@ -552,9 +581,9 @@ void rgAdd(float y) {
 }
 
 /**
-  Determine the linear regression
+  Linear regression
 */
-void rgLinear() {
+void rgLnRegr() {
   int i, iy = 0;
   float denom, dy, x, y;
   float a1, a2, s, s1, s2, s3, s4;
@@ -589,64 +618,51 @@ void rgLinear() {
 }
 
 /**
-  Store the previous athmospheric pressures for the last 1, 2 and 3 hours
-  @param pres current value of the atmospheric pressure
-*/
-void zPrevPres(float pres) {
-  zPrevious[2] = zPrevious[1];
-  zPrevious[1] = zPrevious[0];
-  zPrevious[0] = pres;
-  if (zPrevCount < 3) zPrevCount++;
-}
-
-/**
   Get the Zambretti forecast
-  @param zCurrent current value of the atmospheric pressure
+  @param zbCurrent current value of the atmospheric pressure
   @return the Zambretti forecast
 */
-String zambretti(float zCurrent) {
-  // Keep the current value in the circular buffer
-  rgAdd(zCurrent);
-  String result = "";
-  if (zNextTime == 0) {
-    // First run, set the timeout to the next hour
-    zNextTime = millis() + (60 - minute()) * 60000;
-    zPrevPres(zCurrent);
-  }
+int zbForecast(float zbCurrent) {
+  // Prepare the result
+  int result = -1;
+  // Keep the current value in the circular buffer for linear regression
+  rgStore(zbCurrent);
+  // If first run, set the timeout to the next hour
+  if (zbNextTime == 0) zbNextTime = millis() + (60UL - minute()) * 60000UL;
   else {
-    if (millis() >= zNextTime) {
+    if (millis() >= zbNextTime) {
       // Timer expired
       int trend = 0;
       int index = 0;
-      float range = zBaroTop - zBaroBot;
-      float pres  = zCurrent;
-      // Get the trend
-      if      ((zCurrent > zPrevious[zPrevCount - 1] ) and (zCurrent - zPrevious[zPrevCount - 1] > zThreshold)) trend =  1;
-      else if ((zCurrent < zPrevious[zPrevCount - 1] ) and (zPrevious[zPrevCount - 1] - zCurrent > zThreshold)) trend = -1;
-      // Corrections for summer
-      int mon = month();
-      if ((mon >= 4) and (mon <= 9)) {
-        if      (trend > 0) pres += range * 0.07;
-        else if (trend < 0) pres -= range * 0.07;
-      }
-      // Validate the interval
-      if (pres > zBaroTop) pres = zBaroTop - 2 * zThreshold;
-      // Get the forecast
-      index = (int)(22 * (pres - zBaroBot) / range);
-      if ((index >= 0) and (index <= 22)) {
-        if      (trend > 0) result = zForecast[zRising[index]];
-        else if (trend < 0) result = zForecast[zFalling[index]];
-        else                result = zForecast[zSteady[index]];
-      }
+      float range = zbBaroTop - zbBaroBot;
       // Compute the linear regression
-      rgLinear();
+      rgLnRegr();
       Serial.println(rgAB[0]);
       Serial.println(rgAB[1]);
       Serial.println(rgAB[2]);
-      result = result + " (" + String(rgAB[0], 6) + ")";
-      // Set the next timer and store the pressure
-      zNextTime += zDelay * 1000;
-      zPrevPres(zCurrent);
+      // Compute the pressure variation and last pressure (according to equation)
+      float pVar = rgAB[0] * rgCnt;
+      float pLst = pVar + rgAB[1];
+      // Get the trend
+      if      (pVar >  zbBaroTrs) trend =  1;
+      else if (pVar < -zbBaroTrs) trend = -1;
+      // Corrections for summer
+      int mon = month();
+      if ((mon >= 4) and (mon <= 9)) {
+        if      (trend > 0) pLst += range * 0.07;
+        else if (trend < 0) pLst -= range * 0.07;
+      }
+      // Validate the interval
+      if (pLst > zbBaroTop) pLst = zbBaroTop - 2 * zbBaroTrs;
+      // Get the forecast
+      index = (int)(22 * (pLst - zbBaroBot) / range);
+      if ((index >= 0) and (index <= 22)) {
+        if      (trend > 0) result = zbRs[index];
+        else if (trend < 0) result = zbFl[index];
+        else                result = zbSt[index];
+      }
+      // Set the next timer
+      zbNextTime += zbDelay * 1000;
     }
   }
   return result;
@@ -656,7 +672,7 @@ void setup() {
   // Init the serial com
   Serial.println();
   Serial.begin(115200);
-  Serial.println(NODENAME + "/" + VERSION + " [" + APRS_CALLSIGN + "] " + __DATE__);
+  Serial.println(NODENAME + "/" + VERSION + " [" + aprsCallSign + "] " + __DATE__);
 
   // Try to connect to WiFi
   WiFiManager wifiManager;
@@ -719,10 +735,21 @@ void setup() {
 
   // Initialize the random number generator and set the APRS telemetry start sequence
   if (timeStatus() != timeNotSet) randomSeed(now());
-  aprsSeq = random(1000);
+  aprsTlmSeq = random(1000);
+
+  // Some APRS constants
+  aprsLocation.reserve(50);
+  aprsLocation  = aprsLat;
+  aprsLocation += aprsSymbolTable;
+  aprsLocation += aprsLon;
+  aprsLocation += aprsSymbolStation;
+  
+  aprsHeader.reserve(50);
+  aprsHeader  = aprsCallSign;
+  aprsHeader += aprsPath;
 
   // Start the sensor timer
-  delaySNS.start(SNS_INTERVAL, AsyncDelay::MILLIS);
+  snsNextTime = millis() + snsDelay;
 }
 
 void loop() {
@@ -737,17 +764,13 @@ void loop() {
   yield();
 
   // Read the sensors and publish telemetry
-  if (delaySNS.isExpired()) {
+  if (millis() >= snsNextTime) {
     // Count to check if we need to send the APRS data
-    if (APRS_SNS_COUNT++ > APRS_SNS_MAX) APRS_SNS_COUNT = 1;
-    // Set the telemetry bits
-#ifdef DEVEL
-    int APRS_BITS = B10000000;
-#else
-    int APRS_BITS = B00000000;
-#endif
+    if (++aprsMsrmCount > aprsMsrmMax) aprsMsrmCount = 1;
+    // Set the telemetry bit 7 if the station is being probed
+    if (PROBE) aprsTlmBits = B10000000;
 
-    // Read TSL2561
+    // Read the light sensor TSL2561
     // TODO Adapt the shutter
     unsigned int luxVis = 0, luxIrd = 0;
     double lux = -1;
@@ -762,8 +785,8 @@ void loop() {
       }
     }
     if (light_ok) {
-      // Set the bit to show the sensor is present
-      APRS_BITS |= B00100000;
+      // Set the bit 5 to show the sensor is present (reverse)
+      aprsTlmBits |= B00100000;
       if (light.getData(luxVis, luxIrd)) {
         boolean good = light.getLux(gain, ms, luxVis, luxIrd, lux);
         if (good) {
@@ -774,8 +797,8 @@ void loop() {
         }
         else {
           lux = -1;
-          // Set the bit to show the sensor is saturated
-          APRS_BITS |= B00010000;
+          // Set the bit 4 to show the sensor is saturated
+          aprsTlmBits |= B00010000;
         }
       }
     }
@@ -785,19 +808,19 @@ void loop() {
     rmIRed.add(luxIrd);
     yield();
 
-    // Read BME280
+    // Read the athmospheric sensor BME280
     float temp, pres, slvl, hmdt, dewp;
     if (!atmo_ok) {
       // Try to reinitialize the sensor
       atmo_ok = atmo.begin() == 0x60;
     }
     if (atmo_ok) {
-      // Set the bit to show the sensor is present
-      APRS_BITS |= B01000000;
+      // Set the bit 5 to show the sensor is present (reverse)
+      aprsTlmBits |= B01000000;
       // Get the weather parameters
       temp = atmo.readTempC();
       pres = atmo.readFloatPressure();
-      slvl = pres * ALTI_CORR;
+      slvl = pres * altCorr;
       hmdt = atmo.readFloatHumidity();
       dewp = 243.04 *
              (log(hmdt / 100.0) + ((17.625 * temp) / (243.04 + temp))) /
@@ -819,8 +842,8 @@ void loop() {
     int heap = ESP.getFreeHeap();
     int vcc  = ESP.getVcc();
     if (vcc < 3000) {
-      // Set the bit to show the battery is low
-      APRS_BITS |= B00001000;
+      // Set the bit 3 to show the battery is low
+      aprsTlmBits |= B00001000;
     }
     // Running Median
     rmVcc.add(vcc);
@@ -833,14 +856,15 @@ void loop() {
     mqttPub(MQTT_REPORT + "/heap",        String(heap));
     mqttPub(MQTT_REPORT + "/vcc",         String((float)vcc / 1000, 3));
 
-    // APRS (after the first minute, then every APRS_SNS_MAX minutes)
-    if (APRS_SNS_COUNT == 1) {
-      if (APRS_Client.connect(APRS_SERVER.c_str(), APRS_PORT)) {
+    // APRS (after the first 3600/(aprsMsrmMax*aprsRprtHour) seconds,
+    //       then every 60/aprsRprtHour minutes)
+    if (aprsMsrmCount == 1) {
+      if (APRS_Client.connect(aprsServer, aprsPort)) {
         aprsAuthenticate();
         //aprsSendPosition(" WxStaProbe");
         if (atmo_ok) aprsSendWeather(rmTemp.getMedian(), rmHmdt.getMedian(), rmPres.getMedian(), rmLux.getMedian());
-        //aprsSendWeather(16.3, 61.3, 102456, -1);
-        aprsSendTelemetry(rmVcc.getMedian(), rmRSSI.getMedian(), rmHeap.getMedian(), rmVisi.getMedian(), rmIRed.getMedian(), APRS_BITS);
+        //aprsSendWeather(21.7, 75.2, 102345, -1);
+        aprsSendTelemetry(rmVcc.getMedian(), rmRSSI.getMedian(), rmHeap.getMedian(), rmVisi.getMedian(), rmIRed.getMedian(), aprsTlmBits);
         //aprsSendStatus("Fine weather");
         //aprsSendTelemetrySetup();
         APRS_Client.stop();
@@ -848,6 +872,6 @@ void loop() {
     }
 
     // Repeat sensor reading
-    delaySNS.repeat();
+    snsNextTime += snsDelay;
   }
 }
