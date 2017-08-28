@@ -110,7 +110,7 @@ int altMeters = 83;
 String aprsHeader;
 String aprsLocation;
 String aprsPath = ">APRS,TCPIP*:";
-float altCorr = pow((float)(1.0 - 2.25577e-5 * altMeters), (float)(-5.25588));
+float altCorr = pow((float)(1.0 - 2.25577e-5 * altMeters), (float)(-5.25578));
 float altFeet = altMeters * 3.28084;  // Altitude in feet
 int aprsTlmBits = B00000000;   // Telemetry bits
 // Reports and measurements
