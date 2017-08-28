@@ -38,6 +38,9 @@
 // WiFi
 #include <ESP8266WiFi.h>
 #include <WiFiManager.h>
+#include <WiFiUdp.h>
+#include <ESP8266mDNS.h>
+#include <ArduinoOTA.h>
 
 // NTP
 #include <NtpClientLib.h>
@@ -63,6 +66,10 @@ String LC_NODENAME = "wxsta";
 String VERSION = "0.3.4";
 #endif
 bool PROBE = true;    // True if the station is being probed
+
+// OTA
+int otaProgress       = 0;
+int otaPort           = 8266;
 
 // NTP
 const int TZ = 0;
@@ -688,6 +695,47 @@ void setup() {
   // Connected
   showWiFi();
 
+  // OTA Update
+  ArduinoOTA.setPort(otaPort);
+  ArduinoOTA.setHostname(NODENAME.c_str());
+  // ArduinoOTA.setPassword((const char *)"123");
+
+  ArduinoOTA.onStart([]() {
+    Serial.println(F("OTA Start"));
+  });
+
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nOTA Finished");
+  });
+
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    int otaPrg = progress / (total / 100);
+    if (otaProgress != otaPrg) {
+      otaProgress = otaPrg;
+      Serial.printf("Progress: %u%%\r", otaProgress * 100);
+    }
+  });
+
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR)
+      Serial.println(F("Auth Failed"));
+    else if (error == OTA_BEGIN_ERROR)
+      Serial.println(F("Begin Failed"));
+    else if (error == OTA_CONNECT_ERROR)
+      Serial.println(F("Connect Failed"));
+    else if (error == OTA_RECEIVE_ERROR)
+      Serial.println(F("Receive Failed"));
+    else if (error == OTA_END_ERROR)
+      Serial.println(F("End Failed"));
+  });
+
+  ArduinoOTA.begin();
+#ifdef DEBUG
+  Serial.println(F("OTA Ready"));
+#endif
+
+
   // Start the NTP sync
   //NTP.begin(NTP_SERVER, TZ, true);
   NTP.begin(NTP_SERVER, TZ, false);
@@ -743,7 +791,7 @@ void setup() {
   aprsLocation += aprsSymbolTable;
   aprsLocation += aprsLon;
   aprsLocation += aprsSymbolStation;
-  
+
   aprsHeader.reserve(50);
   aprsHeader  = aprsCallSign;
   aprsHeader += aprsPath;
@@ -753,6 +801,10 @@ void setup() {
 }
 
 void loop() {
+  // OTA
+  ArduinoOTA.handle();
+  yield();
+
   // Process incoming MQTT messages and maintain connection
   if (!MQTT_Client.loop()) {
     // Not connected, try to reconnect every MQTT_INTERVAL seconds
