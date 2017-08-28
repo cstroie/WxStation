@@ -42,10 +42,6 @@
 #include <ESP8266mDNS.h>
 #include <ArduinoOTA.h>
 
-// NTP
-#include <NtpClientLib.h>
-#include <TimeLib.h>
-
 // Timer
 #include <AsyncDelay.h>
 
@@ -71,9 +67,14 @@ bool PROBE = true;    // True if the station is being probed
 int otaProgress       = 0;
 int otaPort           = 8266;
 
-// NTP
-const int TZ = 0;
-String NTP_SERVER = "europe.pool.ntp.org";
+// Time synchronization and time keeping
+WiFiUDP       ntpClient;                                      // NTP UDP client
+const char    ntpServer[] PROGMEM   = "europe.pool.ntp.org";  // NTP server to connect to (RFC5905)
+const int     ntpPort               = 123;                    // NTP port
+unsigned long ntpNextSync           = 0UL;                    // Next time to syncronize
+unsigned long ntpDelta              = 0UL;                    // Difference between real time and internal clock
+bool          ntpOk                 = false;                  // Flag to know the time is accurate
+const int     ntpTZ                 = 0;                      // Time zone
 
 // MQTT parameters
 #ifdef DEVEL
@@ -183,6 +184,127 @@ float rgY[rgMax];                         // The circular buffer
 //float rgY[] = {1974, 1828, 1709, 1639, 1526, 1488, 1442, 1393, 1361, 1354, 1355, 1316, 1250, 1208, 1245, 1242, 1250, 1328, 1370, 1335, 1298, 1210, 1167, 1125, 1120, 1153, 1271, 1156, 1068, 988, 917, 865, 836, 801, 790, 82};
 float rgAB[] = {0, 0, 0};                 // Coefficients: a, b and std dev in f(x)=ax+b
 
+
+
+
+/**
+  Convert IPAddress to char array
+*/
+char charIP(const IPAddress ip, char *buf, size_t len, boolean pad = false) {
+  if (pad) snprintf_P(buf, len, PSTR("%3d.%3d.%3d.%3d"), ip[0], ip[1], ip[2], ip[3]);
+  else     snprintf_P(buf, len, PSTR("%d.%d.%d.%d"), ip[0], ip[1], ip[2], ip[3]);
+}
+
+/**
+  Get current time as UNIX time (1970 epoch)
+
+  @param sync flag to show whether network sync is to be performed
+  @return current UNIX time
+*/
+unsigned long timeUNIX(bool sync = true) {
+  // Check if we need to sync
+  if (millis() >= ntpNextSync and sync) {
+    // Try to get the time from Internet
+    unsigned long utm = ntpSync();
+    if (utm == 0) {
+      // Time sync has failed, sync again over one minute
+      ntpNextSync += 1UL * 60 * 1000;
+      ntpOk = false;
+      // Try to get old time from eeprom, if time delta is zero
+    }
+    else {
+      // Compute the new time delta
+      ntpDelta = utm - (millis() / 1000);
+      // Time sync has succeeded, sync again in 8 hours
+      ntpNextSync += 8UL * 60 * 60 * 1000;
+      ntpOk = true;
+      Serial.print(F("Network UNIX Time: 0x"));
+      Serial.println(utm, 16);
+    }
+  }
+  // Get current time based on uptime and time delta,
+  // or just uptime for no time sync ever
+  return (millis() / 1000) + ntpDelta + ntpTZ * 3600;
+}
+
+/**
+  © Francesco Potortì 2013 - GPLv3 - Revision: 1.13
+
+  Send an NTP packet and wait for the response, return the Unix time
+
+  To lower the memory footprint, no buffers are allocated for sending
+  and receiving the NTP packets.  Four bytes of memory are allocated
+  for transmision, the rest is random garbage collected from the data
+  memory segment, and the received packet is read one byte at a time.
+  The Unix time is returned, that is, seconds from 1970-01-01T00:00.
+*/
+unsigned long ntpSync() {
+  // Open socket on arbitrary port
+  bool ntpOk = ntpClient.begin(12321);
+  // NTP request header: Only the first four bytes of an outgoing
+  // packet need to be set appropriately, the rest can be whatever.
+  const long ntpFirstFourBytes = 0xEC0600E3;
+  // Fail if UDP could not init a socket
+  if (!ntpOk) return 0UL;
+  // Clear received data from possible stray received packets
+  ntpClient.flush();
+  // Send an NTP request
+  char ntpServerBuf[strlen_P((char*)ntpServer) + 1];
+  strncpy_P(ntpServerBuf, (char*)ntpServer, sizeof(ntpServerBuf));
+  if (!(ntpClient.beginPacket(ntpServerBuf, ntpPort) &&
+        ntpClient.write((byte *)&ntpFirstFourBytes, 48) == 48 &&
+        ntpClient.endPacket()))
+    return 0UL;                             // sending request failed
+  // Wait for response; check every pollIntv ms up to maxPoll times
+  const int pollIntv = 150;                 // poll every this many ms
+  const byte maxPoll = 15;                  // poll up to this many times
+  int pktLen;                               // received packet length
+  for (byte i = 0; i < maxPoll; i++) {
+    if ((pktLen = ntpClient.parsePacket()) == 48) break;
+    delay(pollIntv);
+  }
+  if (pktLen != 48) return 0UL;             // no correct packet received
+  // Read and discard the first useless bytes (32 for speed, 40 for accuracy)
+  for (byte i = 0; i < 40; ++i) ntpClient.read();
+  // Read the integer part of sending time
+  unsigned long ntpTime = ntpClient.read(); // NTP time
+  for (byte i = 1; i < 4; i++)
+    ntpTime = ntpTime << 8 | ntpClient.read();
+  // Round to the nearest second if we want accuracy
+  // The fractionary part is the next byte divided by 256: if it is
+  // greater than 500ms we round to the next second; we also account
+  // for an assumed network delay of 50ms, and (0.5-0.05)*256=115;
+  // additionally, we account for how much we delayed reading the packet
+  // since its arrival, which we assume on average to be pollIntv/2.
+  ntpTime += (ntpClient.read() > 115 - pollIntv / 8);
+  // Discard the rest of the packet
+  ntpClient.flush();
+  return ntpTime - 2208988800UL;            // convert to Unix time
+}
+
+/**
+  Get the uptime
+
+  @param buf character array to return the text to
+  @param len the maximum length of the character array
+  @return uptime in seconds
+*/
+unsigned long uptime(char *buf, size_t len) {
+  // Get the uptime in seconds
+  unsigned long upt = millis() / 1000;
+  // Compute hours, minutes and seconds
+  int ss =  upt % 60;
+  //upt -= ss;
+  int mm = (upt % 3600) / 60;
+  //upt -= mm * 60;
+  int hh = (upt % 86400L) / 3600;
+  //upt -= hh * 3600;
+  int dd =  upt / 86400L;
+  // Create the formatted time
+  snprintf_P(buf, len, PSTR("%d days, %02d:%02d:%02d"), dd, hh, mm, ss);
+  // Return the uptime in seconds
+  return upt;
+}
 
 
 /**
@@ -356,14 +478,16 @@ void aprsSend(const String &pkt) {
   Return time in APRS format: DDHHMMz
 */
 String aprsTime() {
-  time_t moment = now();
-  String result;
-  result.reserve(20);
-  result  = zeroPad(day(moment), 2);
-  result += zeroPad(hour(moment), 2);
-  result += zeroPad(minute(moment), 2);
-  result += "z";
-  return result;
+  char buf[8];
+  // Get the time, but do not open a connection to server
+  unsigned long utm = timeUNIX(false);
+  // Compute hour, minute and second
+  int hh = (utm % 86400L) / 3600;
+  int mm = (utm % 3600) / 60;
+  int ss =  utm % 60;
+  // Return the formatted time
+  snprintf_P(buf, sizeof(buf), PSTR("%02d%02d%02dh"), hh, mm, ss);
+  return String(buf);
 }
 
 /**
@@ -635,7 +759,9 @@ int zbForecast(float zbCurrent) {
   // Keep the current value in the circular buffer for linear regression
   rgStore(zbCurrent);
   // If first run, set the timeout to the next hour
-  if (zbNextTime == 0) zbNextTime = millis() + (60UL - minute()) * 60000UL;
+  unsigned long utm = timeUNIX(false);
+  int mm = (utm % 3600) / 60;
+  if (zbNextTime == 0) zbNextTime = millis() + (60UL - mm) * 60000UL;
   else {
     if (millis() >= zbNextTime) {
       // Timer expired
@@ -654,11 +780,12 @@ int zbForecast(float zbCurrent) {
       if      (pVar >  zbBaroTrs) trend =  1;
       else if (pVar < -zbBaroTrs) trend = -1;
       // Corrections for summer
-      int mon = month();
-      if ((mon >= 4) and (mon <= 9)) {
-        if      (trend > 0) pLst += range * 0.07;
-        else if (trend < 0) pLst -= range * 0.07;
-      }
+      // FIXME
+      //int mon = month();
+      //if ((mon >= 4) and (mon <= 9)) {
+      //  if      (trend > 0) pLst += range * 0.07;
+      //  else if (trend < 0) pLst -= range * 0.07;
+      //}
       // Validate the interval
       if (pLst > zbBaroTop) pLst = zbBaroTop - 2 * zbBaroTrs;
       // Get the forecast
@@ -735,10 +862,8 @@ void setup() {
   Serial.println(F("OTA Ready"));
 #endif
 
-
-  // Start the NTP sync
-  //NTP.begin(NTP_SERVER, TZ, true);
-  NTP.begin(NTP_SERVER, TZ, false);
+  // Start time sync
+  timeUNIX();
   yield();
 
   // Start the MQTT client
@@ -782,7 +907,7 @@ void setup() {
   yield();
 
   // Initialize the random number generator and set the APRS telemetry start sequence
-  if (timeStatus() != timeNotSet) randomSeed(now());
+  randomSeed(timeUNIX(false) + millis());
   aprsTlmSeq = random(1000);
 
   // Some APRS constants
@@ -904,7 +1029,8 @@ void loop() {
     // Send to MQTT
     mqttPub(MQTT_REPORT_WIFI + "/rssi",   String(rssi));
     mqttPub(MQTT_REPORT + "/uptime",      String(millis() / 1000));
-    mqttPub(MQTT_REPORT + "/uptime/text", NTP.getUptimeString());
+    // FIXME
+    //mqttPub(MQTT_REPORT + "/uptime/text", NTP.getUptimeString());
     mqttPub(MQTT_REPORT + "/heap",        String(heap));
     mqttPub(MQTT_REPORT + "/vcc",         String((float)vcc / 1000, 3));
 
