@@ -53,15 +53,15 @@
 
 // Device name
 #ifdef DEVEL
-String NODENAME = "DevNode";
-String LC_NODENAME = "devnode";
-String VERSION = "0.4";
+const char NODENAME[] = "WxSta-DEV";
+const char nodename[] = "wxsta-dev";
 #else
-String NODENAME = "WxSta";
-String LC_NODENAME = "wxsta";
-String VERSION = "0.3.4";
+const char NODENAME[] = "WxSta";
+const char nodename[] = "wxsta";
 #endif
-bool PROBE = true;    // True if the station is being probed
+const char VERSION[]  = "4.0";
+bool       PROBE      = true;                   // True if the station is being probed
+const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
 // OTA
 int otaProgress       = 0;
@@ -77,81 +77,75 @@ bool          ntpOk                 = false;                  // Flag to know th
 const int     ntpTZ                 = 0;                      // Time zone
 
 // MQTT parameters
-#ifdef DEVEL
-String MQTT_ID = "devnode-eridu-eu-org";
-#else
-String MQTT_ID = "wxsta-eridu-eu-org";
-#endif
-String MQTT_SERVER = "eridu.eu.org";
-int MQTT_PORT = 1883;
-int MQTT_INTERVAL = 5000;
-String MQTT_CMD  = "command/" + LC_NODENAME;
-String MQTT_REPORT = "report/" + LC_NODENAME;
-String MQTT_REPORT_WIFI = MQTT_REPORT + "/wifi";
-String MQTT_SENSOR = "sensor/outdoor"; // + LC_NODENAME;
-WiFiClient WiFi_Client;
-PubSubClient MQTT_Client(WiFi_Client);
+WiFiClient wifiClient;                                         // WiFi TCP client for MQTT
+PubSubClient mqttClient(wifiClient);                           // MQTT client, based on WiFi client
 AsyncDelay delayMQTT;
+#ifdef DEVEL
+const char          mqttId[]       = "wxsta-dev-eridu-eu-org";  // Development MQTT client ID
+#else
+const char          mqttId[]       = "wxmon-eridu-eu-org";      // Production MQTT client ID
+#endif
+const char          mqttServer[]   = "eridu.eu.org";            // MQTT server address to connect to
+const int           mqttPort       = 1883;                      // MQTT port
+const unsigned long mqttDelay      = 5000UL;                    // Delay between reconnection attempts
+unsigned long       mqttNextTime   = 0UL;                       // Next time to reconnect
+// Various MQTT topics
+const char          mqttTopicCmd[] = "command";
+const char          mqttTopicSns[] = "sensor";
+const char          mqttTopicRpt[] = "report";
 
 // APRS parameters
-char aprsServer[] = "cwop5.aprs.net";
-int aprsPort = 14580;
-#ifdef DEVEL
-char aprsCallSign[] = "FW0727";
-int  aprsPassCode = -1;
-char aprsLat[] = "4455.29N";
-char aprsLon[] = "02527.08E";
-char aprsSymbolStart = '@';
-char aprsSymbolTable = '/';
-char aprsSymbolStation = '_';
-int altMeters = 282;
-#else
-char aprsCallSign[] = "FW0690";
-int  aprsPassCode = -1;
-char aprsLat[] = "4427.67N";
-char aprsLon[] = "02608.03E";
-char aprsSymbolStart = '@';
-char aprsSymbolTable = '/';
-char aprsSymbolStation = '_';
-int altMeters = 83;
-#endif
-String aprsHeader;
-String aprsLocation;
-String aprsPath = ">APRS,TCPIP*:";
-float altCorr = pow((float)(1.0 - 2.25577e-5 * altMeters), (float)(-5.25578));
-float altFeet = altMeters * 3.28084;  // Altitude in feet
-int aprsTlmBits = B00000000;   // Telemetry bits
-// Reports and measurements
-const int aprsRprtHour = 10;  // Number of APRS reports per hour
-const int aprsMsrmMax = 5;    // Number of measurements per report (keep even)
-int aprsMsrmCount = 0;        // Measurements counter
-int aprsTlmSeq = 0;           // Telemetry sequence mumber
-// The APRS connection client
-WiFiClient APRS_Client;
+WiFiClient  aprsClient;                                 // WiFi TCP client for APRS
+const char  aprsServer[] PROGMEM  = "cwop5.aprs.net";   // CWOP APRS-IS server address to connect to
+const int   aprsPort              = 14580;              // CWOP APRS-IS port
+const int   altMeters             = 83;                 // Altitude in Bucharest
+const long  altFeet = (long)(altMeters * 3.28084);                                    // Altitude in feet
+const float altCorr = pow((float)(1.0 - 2.25577e-5 * altMeters), (float)(-5.25578));  // Altitude correction for QNH
 
-// Statistics
-RunningMedian rmTemp = RunningMedian(aprsMsrmMax);
-RunningMedian rmHmdt = RunningMedian(aprsMsrmMax);
-RunningMedian rmPres = RunningMedian(aprsMsrmMax);
-RunningMedian rmLux  = RunningMedian(aprsMsrmMax);
-RunningMedian rmVisi = RunningMedian(aprsMsrmMax);
-RunningMedian rmIRed = RunningMedian(aprsMsrmMax);
-RunningMedian rmVcc  = RunningMedian(aprsMsrmMax);
-RunningMedian rmRSSI = RunningMedian(aprsMsrmMax);
-RunningMedian rmHeap = RunningMedian(aprsMsrmMax);
+const char aprsCallSign[] PROGMEM = "FW0690";
+const char aprsPassCode[] PROGMEM = "-1";
+const char aprsPath[]     PROGMEM = ">APRS,TCPIP*:";
+const char aprsLocation[] PROGMEM = "4427.67N/02608.03E_";
+const char aprsTlmPARM[]  PROGMEM = ":PARM.Light,DHTT,RSSI,Vcc,MCU,PROBE,ATMO,LUX,DHT,VCC,HT,RB,TM";
+const char aprsTlmEQNS[]  PROGMEM = ":EQNS.0,20,0,0,1,0,0,-1,0,0,0.004,4.5,0,1,-100";
+const char aprsTlmUNIT[]  PROGMEM = ":UNIT.mV,C,dBm,V,C,prb,on,on,on,bad,ht,rb,er";
+const char aprsTlmBITS[]  PROGMEM = ":BITS.10001111, ";
+const char eol[]          PROGMEM = "\r\n";
+
+// Reports and measurements
+const int aprsRprtHour   = 10; // Number of APRS reports per hour
+const int aprsMsrmMax    = 3;  // Number of measurements per report (keep even)
+int       aprsMsrmCount  = 0;  // Measurements counter
+int       aprsTlmSeq     = 0;  // Telemetry sequence mumber
+
+// Telemetry bits
+char      aprsTlmBits    = B00000000;
+
+// The APRS packet buffer, largest packet is 82 for v2.1
+char       aprsPkt[100]           = "";
+
+// Statistics (round median filter for the last 3 values)
+enum      rMedIdx {MD_TEMP, MD_HMDT, MD_PRES, MD_SRAD, MD_VISI, MD_IRED, MD_RSSI, MD_VCC, MD_HEAP, MD_ALL};
+int       rMed[MD_ALL][4];
 
 // Sensors
-int snsDelay = 3600000UL / (aprsRprtHour * aprsMsrmMax);
-unsigned long snsNextTime = 0;  // The next time to read the sensors
-BME280 atmo;                    // The athmospheric sensor
-bool atmo_ok = false;           // The athmospheric sensor flag
-SFE_TSL2561 light;              // The illuminance sensor
-bool light_ok = false;          // The illuminance sensor flag
-boolean gain = false;           //    ~    ~    ~    ~    gain (true/false)
-unsigned char shtr = 1;         //    ~    ~    ~    ~    shutter (0, 1, 2)
-unsigned int ms;                //    ~    ~    ~    ~    integration timer
+const unsigned long snsReadTime = 30UL * 1000UL;                          // Total time to read sensors, repeatedly, for aprsMsrmMax times
+const unsigned long snsDelayBfr = 3600000UL / aprsRprtHour - snsReadTime; // Delay before sensor readings
+const unsigned long snsDelayBtw = snsReadTime / aprsMsrmMax;              // Delay between sensor readings
+unsigned long       snsNextTime = 0UL;                                    // Next time to read the sensors
+// BME280
+const byte          atmoAddr    = 0x77;                                   // The athmospheric sensor I2C address
+BME280              atmo;                                                 // The athmospheric sensor
+bool                atmoOK      = false;                                  // The athmospheric sensor presence flag
+// TSL2561
+const byte          lightAddr   = 0x23;                                   // The illuminance sensor I2C address
+SFE_TSL2561         light();                                              // The illuminance sensor
+bool                lightOK     = false;                                  // The illuminance sensor presence flag
+boolean             lightGain   = false;                                  //    ~    ~    ~    ~    gain (true/false)
+unsigned char       lightSHTR   = 1;                                      //    ~    ~    ~    ~    shutter (0, 1, 2)
+unsigned int        lightMS;                                              //    ~    ~    ~    ~    integration timer
 
-// Voltage
+// Set ADC to Voltage
 ADC_MODE(ADC_VCC);
 
 // Zambretti forecaster
@@ -181,7 +175,6 @@ const int rgMax = zbHours * aprsRprtHour; // The size of the circular buffer
 int rgIdx = 0;                            // Index in circular buffers
 int rgCnt = 0;                            // Counter of current values in buffer
 float rgY[rgMax];                         // The circular buffer
-//float rgY[] = {1974, 1828, 1709, 1639, 1526, 1488, 1442, 1393, 1361, 1354, 1355, 1316, 1250, 1208, 1245, 1242, 1250, 1328, 1370, 1335, 1298, 1210, 1167, 1125, 1120, 1153, 1271, 1156, 1068, 988, 917, 865, 836, 801, 790, 82};
 float rgAB[] = {0, 0, 0};                 // Coefficients: a, b and std dev in f(x)=ax+b
 
 
@@ -312,27 +305,36 @@ unsigned long uptime(char *buf, size_t len) {
 */
 void showWiFi() {
   if (WiFi.isConnected()) {
-    String text;
-    text.reserve(250);
-    text  = "\nWiFi connected to ";
-    text += WiFi.SSID();
-    text += " on channel ";
-    text += WiFi.channel();
-    text += ", RSSI ";
-    text += WiFi.RSSI();
-    text += " dBm.";
-    text += "\n IP : ";
-    text += WiFi.localIP().toString();
-    text += "\n GW : ";
-    text += WiFi.gatewayIP().toString();
-    text += "\n DNS: ";
-    text += WiFi.dnsIP().toString();
-    text += "\n\n";
-    Serial.print(text);
+    char ipbuf[16], gwbuf[16], nsbuf[16];
+
+    charIP(WiFi.localIP(), ipbuf, sizeof(ipbuf), true);
+    charIP(WiFi.gatewayIP(), gwbuf, sizeof(ipbuf), true);
+    charIP(WiFi.dnsIP(), nsbuf, sizeof(ipbuf), true);
+
+    Serial.println();
+    Serial.print(F("WiFi connected to "));
+    Serial.print(WiFi.SSID());
+    Serial.print(F(" on channel "));
+    Serial.print(WiFi.channel());
+    Serial.print(F(", RSSI "));
+    Serial.print(WiFi.RSSI());
+    Serial.println(F(" dBm."));
+    Serial.print(F(" IP : "));
+    Serial.println(ipbuf);
+    Serial.print(F(" GW : "));
+    Serial.println(gwbuf);
+    Serial.print(F(" DNS: "));
+    Serial.println(nsbuf);
+    Serial.println();
+  }
+  else {
+    Serial.println();
+    Serial.print(F("WiFi not connected"));
   }
 }
 
-/** MQTT publishing wrapper, using strings, with retain flag on
+/**
+  MQTT publishing wrapper, using strings, with retain flag on
 
   @param topic the MQTT topic
   @param payload the MQTT message to send to topic
@@ -340,10 +342,11 @@ void showWiFi() {
 */
 boolean mqttPubRetain(const String &topic, const String &payload) {
   yield();
-  return MQTT_Client.publish(topic.c_str(), payload.c_str(), true);
+  return mqttClient.publish(topic.c_str(), payload.c_str(), true);
 }
 
-/** MQTT publishing wrapper, using strings
+/**
+  MQTT publishing wrapper, using strings
 
   @param topic the MQTT topic
   @param payload the MQTT message to send to topic
@@ -351,7 +354,62 @@ boolean mqttPubRetain(const String &topic, const String &payload) {
 */
 boolean mqttPub(const String &topic, const String &payload) {
   yield();
-  return MQTT_Client.publish(topic.c_str(), payload.c_str(), false);
+  return mqttClient.publish(topic.c_str(), payload.c_str(), false);
+}
+
+/**
+  Publish char array to topic
+*/
+boolean mqttPub(const char *payload, const char *lvl1, const char *lvl2 = NULL, const char *lvl3 = NULL, const boolean retain = false) {
+  char buf[64];
+  strcpy(buf, lvl1);
+  if (lvl2 != NULL) {
+    strcat(buf, "/");
+    strcat(buf, lvl2);
+  }
+  if (lvl3 != NULL) {
+    strcat(buf, "/");
+    strcat(buf, lvl3);
+  }
+  yield();
+  return mqttClient.publish(buf, payload, retain);
+}
+
+/**
+  Publish char array to topic and retain
+*/
+boolean mqttPubRet(const char *payload, const char *lvl1, const char *lvl2 = NULL, const char *lvl3 = NULL, const boolean retain = true) {
+  return mqttPub(payload, lvl1, lvl2, lvl3, retain);
+}
+
+/**
+  Publish integer to topic
+*/
+boolean mqttPub(const int payload, const char *lvl1, const char *lvl2 = NULL, const char *lvl3 = NULL, const boolean retain = false) {
+  char buf[8];
+  sprintf(buf, "%d", payload);
+  return mqttPub(buf, lvl1, lvl2, lvl3, retain);
+}
+
+/**
+  Publish integer to topic and retain
+*/
+boolean mqttPubRet(const int payload, const char *lvl1, const char *lvl2 = NULL, const char *lvl3 = NULL, const boolean retain = true) {
+  return mqttPub(payload, lvl1, lvl2, lvl3, retain);
+}
+
+/**
+  Subscribe to topic or topic/subtopic
+*/
+void mqttSubscribe(const char *lvl1, const char *lvl2 = NULL, bool all = false) {
+  char buf[64];
+  strcpy(buf, lvl1);
+  if (lvl2 != NULL) {
+    strcat_P(buf, PSTR("/"));
+    strcat(buf, lvl2);
+  }
+  if (all) strcat_P(buf, PSTR("/#"));
+  mqttClient.subscribe(buf);
 }
 
 /**
@@ -360,28 +418,35 @@ boolean mqttPub(const String &topic, const String &payload) {
   @return boolean reconnection success
 */
 boolean mqttReconnect() {
-#ifdef DEBUG
   Serial.println(F("MQTT connecting..."));
-#endif
-  if (MQTT_Client.connect(MQTT_ID.c_str())) {
+  char buf[32];
+  strcpy(buf, mqttTopicRpt);
+  strcat(buf, "/");
+  strcat(buf, nodename);
+  if (mqttClient.connect(mqttId, buf, 0, true, "offline")) {
+    // Publish the "online" status
+    mqttPubRet("online", buf);
+    
     // Publish the connection report
-    mqttPubRetain(MQTT_REPORT_WIFI + "/hostname", WiFi.hostname());
-    mqttPubRetain(MQTT_REPORT_WIFI + "/mac",      WiFi.macAddress());
-    mqttPubRetain(MQTT_REPORT_WIFI + "/ssid",     WiFi.SSID());
-    mqttPubRetain(MQTT_REPORT_WIFI + "/rssi",     String(WiFi.RSSI()));
-    mqttPubRetain(MQTT_REPORT_WIFI + "/ip",       WiFi.localIP().toString());
-    mqttPubRetain(MQTT_REPORT_WIFI + "/gw",       WiFi.gatewayIP().toString());
+    strcat(buf, "/wifi");
+    mqttPubRet(WiFi.hostname().c_str(), buf, "hostname");
+    mqttPubRet(WiFi.macAddress().c_str(), buf, "mac");
+    mqttPubRet(WiFi.SSID().c_str(), buf, "ssid");
+    mqttPubRet(WiFi.RSSI(), buf, "rssi");
+    char ipbuf[16];
+    charIP(WiFi.localIP(), ipbuf, sizeof(ipbuf));
+    mqttPubRet(ipbuf, buf, "ip");
+    charIP(WiFi.gatewayIP(), ipbuf, sizeof(ipbuf));
+    mqttPubRet(ipbuf, buf, "gw");
+    
     // Subscribe
-    MQTT_Client.subscribe((MQTT_CMD + "/#").c_str());
-    // TODO
-    //MQTT_Client.subscribe("sensor/#");
-#ifdef DEBUG
+    mqttSubscribe(mqttTopicCmd, nodename,  true);  // Subscribe to command topic
+
     Serial.print(F("MQTT connected to "));
-    Serial.println(MQTT_SERVER);
-#endif
+    Serial.println(mqttServer);
   }
   yield();
-  return MQTT_Client.connected();
+  return mqttClient.connected();
 }
 
 /**
@@ -392,40 +457,31 @@ boolean mqttReconnect() {
   @param length the length of the message payload (unsigned int)
 */
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  // Make a copy
+  // Make a limited copy of the payload and make sure it ends with \0
   char message[100];
   if (length > 100) length = 100;
   memcpy(message, payload, length);
   message[length] = '\0';
 
-  // Create string objects
-  String strTopic = String(topic);
-  String strMessage = String(message);
 #ifdef DEBUG
-  Serial.println("MQTT " + strTopic + ": " + strMessage);
+  Serial.printf("MQTT %s: %s\r\n", topic, message);
 #endif
 
   // Decompose the topic
-  String strRoot, strTrunk, strBranch;
-  int idxSepOne = strTopic.indexOf('/');
-  if (idxSepOne != -1) {
-    strRoot = strTopic.substring(0, idxSepOne);
-    //Serial.println("ROOT " + strRoot);
-    int idxSepTwo = strTopic.indexOf('/', idxSepOne + 1);
-    if (idxSepTwo != -1) {
-      strTrunk = strTopic.substring(idxSepOne + 1, idxSepTwo);
-      //Serial.println("TRNK " + strTrunk);
-      strBranch = strTopic.substring(idxSepTwo + 1);
-      //Serial.println("BRNC " + strBranch);
+  char *pRoot = NULL, *pTrunk = NULL, *pBranch = NULL;
+  pRoot = topic;
+  pTrunk = strchr(pRoot, '/');
+  if (pTrunk != NULL)
+    *pTrunk++ = '\0';
+  pBranch = strchr(pTrunk, '/');
+  if (pBranch != NULL)
+    *pBranch++ = '\0';
 
-      // Dispatcher
-      if (strRoot == "command") {
-        if (strTrunk == LC_NODENAME) {
-          if (strBranch == "restart") {
-            ESP.restart();
-          }
-        }
-      }
+  // Dispatcher
+  if (strcmp(pRoot, "command") == 0) {
+    if (strcmp(pTrunk, nodename) == 0) {
+      if (strcmp(pBranch, "restart") == 0)
+        ESP.restart();
     }
   }
 }
@@ -466,7 +522,7 @@ String zeroPad(float x, int digits) {
 }
 
 void aprsSend(const String &pkt) {
-  APRS_Client.println(pkt);
+  aprsClient.println(pkt);
   yield();
 #ifdef DEBUG
   Serial.print("APRS: ");
@@ -802,11 +858,29 @@ int zbForecast(float zbCurrent) {
   return result;
 }
 
+/**
+  Print a character array from program memory
+*/
+void print_P(const char *str) {
+  uint8_t val;
+  do {
+    val = pgm_read_byte(str++);
+    if (val) Serial.write(val);
+  } while (val);
+}
+
+/**
+  Main Arduino setup function
+*/
 void setup() {
   // Init the serial com
-  Serial.println();
   Serial.begin(115200);
-  Serial.println(NODENAME + "/" + VERSION + " [" + aprsCallSign + "] " + __DATE__);
+  Serial.println();
+  print_P(NODENAME);
+  Serial.print(F(" "));
+  print_P(VERSION);
+  Serial.print(F(" "));
+  Serial.println(__DATE__);
 
   // Try to connect to WiFi
   WiFiManager wifiManager;
@@ -814,10 +888,9 @@ void setup() {
   //wifiManager.resetSettings();
   wifiManager.setTimeout(300);
   wifiManager.setAPCallback(wifiCallback);
-  wifiManager.autoConnect(NODENAME.c_str());
-  while (!wifiManager.autoConnect(NODENAME.c_str())) {
+  wifiManager.autoConnect(NODENAME);
+  while (!wifiManager.autoConnect(NODENAME))
     delay(1000);
-  }
 
   // Connected
   showWiFi();
@@ -858,18 +931,16 @@ void setup() {
   });
 
   ArduinoOTA.begin();
-#ifdef DEBUG
   Serial.println(F("OTA Ready"));
-#endif
 
   // Start time sync
   timeUNIX();
   yield();
 
   // Start the MQTT client
-  MQTT_Client.setServer(MQTT_SERVER.c_str(), MQTT_PORT);
-  MQTT_Client.setCallback(mqttCallback);
-  delayMQTT.start(MQTT_INTERVAL, AsyncDelay::MILLIS);
+  mqttClient.setServer(mqttServer, mqttPort);
+  mqttClient.setCallback(mqttCallback);
+  mqttNextTime = millis();
   yield();
 
   // For I2C, the ESP8266-1 module uses the pin 0 for SDA and 2 for SCL
@@ -879,7 +950,7 @@ void setup() {
 
   // BME280
   atmo.settings.commInterface = I2C_MODE;
-  atmo.settings.I2CAddress = 0x77;
+  atmo.settings.I2CAddress = atmoAddr;
   atmo.settings.runMode = 3;
   atmo.settings.tStandby = 0;
   atmo.settings.filter = 0;
@@ -887,59 +958,60 @@ void setup() {
   atmo.settings.pressOverSample = 1;
   atmo.settings.humidOverSample = 1;
   delay(10);
-  atmo_ok = atmo.begin() == 0x60;
-  if (atmo_ok) Serial.println("BME280 sensor detected.");
-  else         Serial.println("BME280 sensor missing.");
+  atmoOK = atmo.begin() == 0x60;
+  if (atmoOK) Serial.println(F("BME280  sensor detected"));
+  else        Serial.println(F("BME280  sensor missing"));
+  yield();
 
   // TSL2561
   light.begin();
   unsigned char ID;
   if (light.getID(ID)) {
-    light.setTiming(gain, shtr, ms);
+    light.setTiming(lightGain, lightSHTR, lightMS);
     light.setPowerUp();
-    light_ok = true;
-    Serial.println("TSL2561 sensor detected.");
+    lightOK = true;
+    Serial.println(F("TSL2561 sensor detected"));
   }
   else {
-    light_ok = false;
-    Serial.println("TSL2561 sensor missing.");
+    lightOK = false;
+    Serial.println(F("TSL2561 sensor missing"));
   }
   yield();
 
+  // Hardware data
+  int hwVcc  = ESP.getVcc();
+  Serial.print(F("Vcc : "));
+  Serial.println((float)hwVcc / 1000, 3);
+
   // Initialize the random number generator and set the APRS telemetry start sequence
-  randomSeed(timeUNIX(false) + millis());
+  randomSeed(timeUNIX(false) + hwVcc + millis());
   aprsTlmSeq = random(1000);
-
-  // Some APRS constants
-  aprsLocation.reserve(50);
-  aprsLocation  = aprsLat;
-  aprsLocation += aprsSymbolTable;
-  aprsLocation += aprsLon;
-  aprsLocation += aprsSymbolStation;
-
-  aprsHeader.reserve(50);
-  aprsHeader  = aprsCallSign;
-  aprsHeader += aprsPath;
+  Serial.print(F("TLM : "));
+  Serial.println(aprsTlmSeq);
 
   // Start the sensor timer
-  snsNextTime = millis() + snsDelay;
+  snsNextTime = millis();
+  yield();
 }
 
+/**
+  Main Arduino loop
+*/
 void loop() {
   // OTA
   ArduinoOTA.handle();
   yield();
 
   // Process incoming MQTT messages and maintain connection
-  if (!MQTT_Client.loop()) {
-    // Not connected, try to reconnect every MQTT_INTERVAL seconds
-    if (delayMQTT.isExpired()) {
-      mqttReconnect();
-      delayMQTT.repeat();
-    }
-  }
+  if (!mqttClient.loop())
+    // Not connected, check if it's time to reconnect
+    if (millis() >= mqttNextTime)
+      // Try to reconnect every mqttDelay seconds
+      if (!mqttReconnect()) mqttNextTime = millis() + mqttDelay;
   yield();
 
+
+  // TODO
   // Read the sensors and publish telemetry
   if (millis() >= snsNextTime) {
     // Count to check if we need to send the APRS data
@@ -951,21 +1023,21 @@ void loop() {
     // TODO Adapt the shutter
     unsigned int luxVis = 0, luxIrd = 0;
     double lux = -1;
-    if (!light_ok) {
+    if (!lightOK) {
       // Try to reinitialize the sensor
       light.begin();
       unsigned char ID;
       if (light.getID(ID)) {
-        light.setTiming(gain, shtr, ms);
+        light.setTiming(lightGain, lightSHTR, lightMS);
         light.setPowerUp();
-        light_ok = true;
+        lightOK = true;
       }
     }
-    if (light_ok) {
+    if (lightOK) {
       // Set the bit 5 to show the sensor is present (reverse)
       aprsTlmBits |= B00100000;
       if (light.getData(luxVis, luxIrd)) {
-        boolean good = light.getLux(gain, ms, luxVis, luxIrd, lux);
+        boolean good = light.getLux(lightGain, lightMS, luxVis, luxIrd, lux);
         if (good) {
           // Send to MQTT
           mqttPub(MQTT_SENSOR + "/illuminance", String(lux, 2));
@@ -987,11 +1059,11 @@ void loop() {
 
     // Read the athmospheric sensor BME280
     float temp, pres, slvl, hmdt, dewp;
-    if (!atmo_ok) {
+    if (!atmoOK) {
       // Try to reinitialize the sensor
-      atmo_ok = atmo.begin() == 0x60;
+      atmoOK = atmo.begin() == 0x60;
     }
-    if (atmo_ok) {
+    if (atmoOK) {
       // Set the bit 5 to show the sensor is present (reverse)
       aprsTlmBits |= B01000000;
       // Get the weather parameters
@@ -1037,15 +1109,15 @@ void loop() {
     // APRS (after the first 3600/(aprsMsrmMax*aprsRprtHour) seconds,
     //       then every 60/aprsRprtHour minutes)
     if (aprsMsrmCount == 1) {
-      if (APRS_Client.connect(aprsServer, aprsPort)) {
+      if (aprsClient.connect(aprsServer, aprsPort)) {
         aprsAuthenticate();
         //aprsSendPosition(" WxStaProbe");
-        if (atmo_ok) aprsSendWeather(rmTemp.getMedian(), rmHmdt.getMedian(), rmPres.getMedian(), rmLux.getMedian());
+        if (atmoOK) aprsSendWeather(rmTemp.getMedian(), rmHmdt.getMedian(), rmPres.getMedian(), rmLux.getMedian());
         //aprsSendWeather(21.7, 75.2, 102345, -1);
         aprsSendTelemetry(rmVcc.getMedian(), rmRSSI.getMedian(), rmHeap.getMedian(), rmVisi.getMedian(), rmIRed.getMedian(), aprsTlmBits);
         //aprsSendStatus("Fine weather");
         //aprsSendTelemetrySetup();
-        APRS_Client.stop();
+        aprsClient.stop();
       };
     }
 
