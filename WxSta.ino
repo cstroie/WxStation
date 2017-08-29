@@ -106,10 +106,10 @@ const char aprsCallSign[] PROGMEM = "FW0690";
 const char aprsPassCode[] PROGMEM = "-1";
 const char aprsPath[]     PROGMEM = ">APRS,TCPIP*:";
 const char aprsLocation[] PROGMEM = "4427.67N/02608.03E_";
-const char aprsTlmPARM[]  PROGMEM = ":PARM.Light,DHTT,RSSI,Vcc,MCU,PROBE,ATMO,LUX,DHT,VCC,HT,RB,TM";
-const char aprsTlmEQNS[]  PROGMEM = ":EQNS.0,20,0,0,1,0,0,-1,0,0,0.004,4.5,0,1,-100";
-const char aprsTlmUNIT[]  PROGMEM = ":UNIT.mV,C,dBm,V,C,prb,on,on,on,bad,ht,rb,er";
-const char aprsTlmBITS[]  PROGMEM = ":BITS.10001111, ";
+const char aprsTlmPARM[]  PROGMEM = ":PARM.Vcc,RSSI,Heap,IRed,Visb,PROBE,ATMO,LUX,SAT,BAT,B6,B7,B8";
+const char aprsTlmEQNS[]  PROGMEM = ":EQNS.0,0.004,2.5,0,-1,0,0,200,0,0,256,0,0,256,0";
+const char aprsTlmUNIT[]  PROGMEM = ":UNIT.V,dBm,Bytes,units,units,prb,on,on,sat,low,N/A,N/A,N/A";
+const char aprsTlmBITS[]  PROGMEM = ":BITS.10011111, ";
 const char eol[]          PROGMEM = "\r\n";
 
 // Reports and measurements
@@ -489,43 +489,26 @@ void wifiCallback(WiFiManager *wifiMgr) {
 }
 
 /**
-  Convert to integer and pad with "0"
+  Send an APRS packet and, eventuall, print it to serial line
 
-  @param x the number to pad
-  @param digits number of characters
+  @param *pkt the packet to send
 */
-String zeroPad(float x, int digits) {
-  long y = (long)x;
-  String result;
-  result.reserve(20);
-  result = y;
-  String pad = "000000000";
-  if (result.length() < digits) {
-    pad = pad.substring(0, digits - result.length());
-    if (y < 0) {
-      result = "-" + pad + String(-y);
-    }
-    else {
-      result = pad + result;
-    }
-  }
-  return result;
-}
-
-void aprsSend(const String &pkt) {
-  aprsClient.println(pkt);
+void aprsSend(const char *pkt) {
+  aprsClient.print(pkt);
   yield();
+  //aprsClient.write((uint8_t *)pkt, strlen(pkt));
 #ifdef DEBUG
-  Serial.print("APRS: ");
-  Serial.println(pkt);
+  Serial.print(pkt);
 #endif
 }
 
 /**
-  Return time in APRS format: DDHHMMz
+  Return time in zulu APRS format: HHMMSSh
+
+  @param *buf the buffer to return the time to
+  @param len the buffer length
 */
-String aprsTime() {
-  char buf[8];
+char aprsTime(char *buf, size_t len) {
   // Get the time, but do not open a connection to server
   unsigned long utm = timeUNIX(false);
   // Compute hour, minute and second
@@ -533,27 +516,24 @@ String aprsTime() {
   int mm = (utm % 3600) / 60;
   int ss =  utm % 60;
   // Return the formatted time
-  snprintf_P(buf, sizeof(buf), PSTR("%02d%02d%02dh"), hh, mm, ss);
-  return String(buf);
+  snprintf_P(buf, len, PSTR("%02d%02d%02dh"), hh, mm, ss);
 }
 
 /**
   Send APRS authentication data
   user FW0690 pass -1 vers WxSta 0.2"
-
 */
 void aprsAuthenticate() {
-  String pkt;
-  pkt.reserve(200);
-  pkt  = "user ";
-  pkt += aprsCallSign;
-  pkt += " pass ";
-  pkt += aprsPassCode;
-  pkt += " vers ";
-  pkt += NODENAME;
-  pkt += " ";
-  pkt += VERSION;
-  aprsSend(pkt);
+  strcpy_P(aprsPkt, PSTR("user "));
+  strcat_P(aprsPkt, aprsCallSign);
+  strcat_P(aprsPkt, PSTR(" pass "));
+  strcat_P(aprsPkt, aprsPassCode);
+  strcat_P(aprsPkt, PSTR(" vers "));
+  strcat_P(aprsPkt, NODENAME);
+  strcat_P(aprsPkt, PSTR(" "));
+  strcat_P(aprsPkt, VERSION);
+  strcat_P(aprsPkt, eol);
+  aprsSend(aprsPkt);
 }
 
 /**
@@ -565,6 +545,8 @@ void aprsAuthenticate() {
   @param pres athmospheric pressure
   @param lux illuminance
 */
+// FIXME
+/**
 void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
   String zbLR;
   // Temperature will be in Fahrenheit
@@ -616,6 +598,50 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
   // Send the packet
   aprsSend(pkt);
 }
+*/
+void aprsSendWeather(int temp, int hmdt, int pres, int lux) {
+  char buf[8];
+  strcpy_P(aprsPkt, aprsCallSign);
+  strcat_P(aprsPkt, aprsPath);
+  strcat_P(aprsPkt, PSTR("@"));
+  aprsTime(buf, sizeof(buf));
+  strncat(aprsPkt, buf, sizeof(buf));
+  strcat_P(aprsPkt, aprsLocation);
+  // Wind (unavailable)
+  strcat_P(aprsPkt, PSTR(".../...g..."));
+  // Temperature
+  if (temp >= -460) { // 0K in F
+    sprintf_P(buf, PSTR("t%03d"), temp);
+    strncat(aprsPkt, buf, sizeof(buf));
+  }
+  else {
+    strcat_P(aprsPkt, PSTR("t..."));
+  }
+  // Humidity
+  if (hmdt >= 0) {
+    if (hmdt == 100) {
+      strcat_P(aprsPkt, PSTR("h00"));
+    }
+    else {
+      sprintf_P(buf, PSTR("h%02d"), hmdt);
+      strncat(aprsPkt, buf, sizeof(buf));
+    }
+  }
+  // Athmospheric pressure
+  if (pres >= 0) {
+    sprintf_P(buf, PSTR("b%05d"), pres);
+    strncat(aprsPkt, buf, sizeof(buf));
+  }
+  // Illuminance, if valid
+  if (lux >= 0 and lux <= 999) {
+    sprintf_P(buf, PSTR("L%03d"), lux);
+    strncat(aprsPkt, buf, sizeof(buf));
+  }
+  // Comment (device name)
+  strcat_P(aprsPkt, DEVICEID);
+  strcat_P(aprsPkt, eol);
+  aprsSend(aprsPkt);
+}
 
 /**
   Send APRS telemetry and, periodically, send the telemetry setup
@@ -631,65 +657,64 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
 void aprsSendTelemetry(int vcc, int rssi, int heap, unsigned int luxVis, unsigned int luxIrd, byte bits) {
   // Increment the telemetry sequence number, reset it if exceeds 999
   if (++aprsTlmSeq > 999) aprsTlmSeq = 0;
-  // Send the telemetry setup on power up (first 5 minutes) or if the sequence number is 0
-  if ((aprsTlmSeq == 0) or (millis() < 300000UL)) aprsSendTelemetrySetup();
+  // Send the telemetry setup if the sequence number is 0
+  if (aprsTlmSeq == 0) aprsSendTelemetrySetup();
   // Compose the APRS packet
-  String pkt;
-  pkt.reserve(200);
-  pkt  = aprsHeader;
-  pkt += "T#";
-  pkt += zeroPad(aprsTlmSeq, 3);
-  pkt += ",";
-  pkt += zeroPad((vcc - 2500) / 4, 3);
-  pkt += ",";
-  pkt += zeroPad(-rssi, 3);
-  pkt += ",";
-  pkt += zeroPad(heap / 200, 3);
-  pkt += ",";
-  pkt += zeroPad(luxVis / 256, 3);
-  pkt += ",";
-  pkt += zeroPad(luxIrd / 256, 3);
-  pkt += ",";
-  pkt += String(bits, BIN);
-  // Send the packet
-  aprsSend(pkt);
+  strcpy_P(aprsPkt, aprsCallSign);
+  strcat_P(aprsPkt, aprsPath);
+  strcat_P(aprsPkt, PSTR("T"));
+  char buf[40];
+  // TODO
+  snprintf_P(buf, sizeof(buf), PSTR("#%03d,%03d,%03d,%03d,%03d,%03d,"), aprsTlmSeq, (vcc - 2500) / 4, -rssi, heap / 200, luxVis / 256, luxIrd / 256);
+  strncat(aprsPkt, buf, sizeof(buf));
+  itoa(bits, buf, 2);
+  strncat(aprsPkt, buf, sizeof(buf));
+  strcat_P(aprsPkt, eol);
+  aprsSend(aprsPkt);
 }
 
 /**
   Send APRS telemetry setup
 */
 void aprsSendTelemetrySetup() {
-  // Space padding
   char padCallSign[10];
-  sprintf(padCallSign, "%-9s", aprsCallSign);
-  // The packet header
-  String pktHeader;
-  pktHeader.reserve(50);
-  pktHeader  = aprsHeader;
-  pktHeader += ":";
-  pktHeader += padCallSign;
-  // Compose the APRS packet
-  String pkt;
-  pkt.reserve(200);
+  strcpy_P(padCallSign, aprsCallSign);  // Workaround
+  sprintf_P(padCallSign, PSTR("%-9s"), padCallSign);
   // Parameter names
-  pkt  = pktHeader;
-  pkt += ":PARM.Vcc,RSSI,Heap,IRed,Visb,PROBE,ATMO,LUX,SAT,BAT,B6,B7,B8";
-  aprsSend(pkt);
-  // Equtions
-  pkt  = pktHeader;
-  pkt += ":EQNS.0,0.004,2.5,0,-1,0,0,200,0,0,256,0,0,256,0";
-  aprsSend(pkt);
+  strcpy_P(aprsPkt, aprsCallSign);
+  strcat_P(aprsPkt, aprsPath);
+  strcat_P(aprsPkt, PSTR(":"));
+  strncat(aprsPkt, padCallSign, sizeof(padCallSign));
+  strcat_P(aprsPkt, aprsTlmPARM);
+  strcat_P(aprsPkt, eol);
+  aprsSend(aprsPkt);
+  // Equations
+  strcpy_P(aprsPkt, aprsCallSign);
+  strcat_P(aprsPkt, aprsPath);
+  strcat_P(aprsPkt, PSTR(":"));
+  strncat(aprsPkt, padCallSign, sizeof(padCallSign));
+  strcat_P(aprsPkt, aprsTlmEQNS);
+  strcat_P(aprsPkt, eol);
+  aprsSend(aprsPkt);
   // Units
-  pkt  = pktHeader;
-  pkt += ":UNIT.V,dBm,Bytes,units,units,prb,on,on,sat,low,N/A,N/A,N/A";
-  aprsSend(pkt);
+  strcpy_P(aprsPkt, aprsCallSign);
+  strcat_P(aprsPkt, aprsPath);
+  strcat_P(aprsPkt, PSTR(":"));
+  strncat(aprsPkt, padCallSign, sizeof(padCallSign));
+  strcat_P(aprsPkt, aprsTlmUNIT);
+  strcat_P(aprsPkt, eol);
+  aprsSend(aprsPkt);
   // Bit sense and project name
-  pkt  = pktHeader;
-  pkt += ":BITS.10011111,";
-  pkt += NODENAME;
-  pkt += "/";
-  pkt += VERSION;
-  aprsSend(pkt);
+  strcpy_P(aprsPkt, aprsCallSign);
+  strcat_P(aprsPkt, aprsPath);
+  strcat_P(aprsPkt, PSTR(":"));
+  strncat(aprsPkt, padCallSign, sizeof(padCallSign));
+  strcat_P(aprsPkt, aprsTlmBITS);
+  strcat_P(aprsPkt, NODENAME);
+  strcat_P(aprsPkt, PSTR("/"));
+  strcat_P(aprsPkt, VERSION);
+  strcat_P(aprsPkt, eol);
+  aprsSend(aprsPkt);
 }
 
 /**
@@ -698,53 +723,41 @@ void aprsSendTelemetrySetup() {
 
   @param message the status message to send
 */
-void aprsSendStatus(const String &message) {
+void aprsSendStatus(const char *message) {
   // Send only if the message is not empty
-  if (message != "") {
-    // Compose the APRS packet
-    String pkt;
-    pkt.reserve(200);
-    pkt  = aprsHeader;
-    pkt += ">";
-    pkt += message;
-    // Send the packet
-    aprsSend(pkt);
+  if (message[0] != '\0') {
+    // Send the APRS packet
+    strcpy_P(aprsPkt, aprsCallSign);
+    strcat_P(aprsPkt, aprsPath);
+    strcat_P(aprsPkt, PSTR(">"));
+    strcat(aprsPkt, message);
+    strcat_P(aprsPkt, eol);
+    aprsSend(aprsPkt);
   }
 }
 
 /**
-  Send APRS position
+  Send APRS position and altitude
   FW0690>APRS,TCPIP*:!DDMM.hhN/DDDMM.hhW$comments
 
   @param comment the comment to append
 */
-void aprsSendPosition(const String &comment) {
+void aprsSendPosition(const char *comment = NULL) {
   // Compose the APRS packet
-  String pkt;
-  pkt.reserve(200);
-  pkt  = aprsHeader;
-  pkt += "=";
-  pkt += aprsLocation;
-  pkt += comment;
-  // Send the packet
-  aprsSend(pkt);
-}
-
-/**
-  Send APRS position and alitude
-  FW0690>APRS,TCPIP*:!DDMM.hhN/DDDMM.hhW/000/000/A=000974comments
-
-  @param comment the comment to append
-*/
-void aprsSendAltitude(const String &comment) {
-  // Compose the APRS packet
-  String pkt;
-  pkt.reserve(200);
-  pkt  = "/000/000/A=";
-  pkt += zeroPad(altFeet, 6);
-  pkt += comment;
-  // Send the packet
-  aprsSendPosition(pkt);
+  strcpy_P(aprsPkt, aprsCallSign);
+  strcat_P(aprsPkt, aprsPath);
+  strcat_P(aprsPkt, PSTR("!"));
+  strcat_P(aprsPkt, aprsLocation);
+  strcat_P(aprsPkt, PSTR("/A="));
+  char buf[7];
+  sprintf_P(buf, PSTR("%06d"), altFeet);
+  strncat(aprsPkt, buf, sizeof(buf));
+  strcat_P(aprsPkt, PSTR(" "));
+  if (comment != NULL) strcat(aprsPkt, comment);
+  else strcat_P(aprsPkt, NODENAME);
+  if (PROBE) strcat_P(aprsPkt, PSTR(" [PROBE]"));
+  strcat_P(aprsPkt, eol);
+  aprsSend(aprsPkt);
 }
 
 /**
@@ -888,7 +901,7 @@ void setup() {
 
   // OTA Update
   ArduinoOTA.setPort(otaPort);
-  ArduinoOTA.setHostname(NODENAME.c_str());
+  ArduinoOTA.setHostname(NODENAME);
   // ArduinoOTA.setPassword((const char *)"123");
 
   ArduinoOTA.onStart([]() {
@@ -1113,15 +1126,26 @@ void loop() {
 
     // APRS (after the first 3600/(aprsMsrmMax*aprsRprtHour) seconds,
     //       then every 60/aprsRprtHour minutes)
-    if (aprsMsrmCount == 1) {
+    if (aprsMsrmCount == 0) {
+      // Connect to APRS server
       if (aprsClient.connect(aprsServer, aprsPort)) {
+        // Authentication
         aprsAuthenticate();
-        //aprsSendPosition(" WxStaProbe");
-        if (atmoOK) aprsSendWeather(rmTemp.getMedian(), rmHmdt.getMedian(), rmPres.getMedian(), rmLux.getMedian());
-        //aprsSendWeather(21.7, 75.2, 102345, -1);
-        aprsSendTelemetry(rmVcc.getMedian(), rmRSSI.getMedian(), rmHeap.getMedian(), rmVisi.getMedian(), rmIRed.getMedian(), aprsTlmBits);
+        // Send the position, altitude and comment in firsts minutes after boot
+        if (millis() < snsDelayBfr) aprsSendPosition();
+        // Send weather data
+        aprsSendWeather(rMedOut(MD_TEMP), rMedOut(MD_HMDT), rMedOut(MD_PRES), rMedOut(MD_SRAD));
+        //if (atmoOK) aprsSendWeather(rmTemp.getMedian(), rmHmdt.getMedian(), rmPres.getMedian(), rmLux.getMedian());
+        // Send the telemetry
+        aprsSendTelemetry(rMedOut(MD_A0) / 20,
+                          rMedOut(MD_DHTT),
+                          rMedOut(MD_RSSI),
+                          rMedOut(MD_VCC) / 4 - 1125,
+                          rMedOut(MD_MCU) / 100 + 100,
+                          aprsTlmBits);
+        //aprsSendTelemetry(rmVcc.getMedian(), rmRSSI.getMedian(), rmHeap.getMedian(), rmVisi.getMedian(), rmIRed.getMedian(), aprsTlmBits);
         //aprsSendStatus("Fine weather");
-        //aprsSendTelemetrySetup();
+        // Close the connection
         aprsClient.stop();
       };
     }
