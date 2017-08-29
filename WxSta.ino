@@ -91,7 +91,7 @@ const unsigned long mqttDelay      = 5000UL;                    // Delay between
 unsigned long       mqttNextTime   = 0UL;                       // Next time to reconnect
 // Various MQTT topics
 const char          mqttTopicCmd[] = "command";
-const char          mqttTopicSns[] = "sensor";
+const char          mqttTopicSns[] = "sensor/outdoor";
 const char          mqttTopicRpt[] = "report";
 
 // APRS parameters
@@ -285,13 +285,10 @@ unsigned long ntpSync() {
 unsigned long uptime(char *buf, size_t len) {
   // Get the uptime in seconds
   unsigned long upt = millis() / 1000;
-  // Compute hours, minutes and seconds
+  // Compute days, hours, minutes and seconds
   int ss =  upt % 60;
-  //upt -= ss;
   int mm = (upt % 3600) / 60;
-  //upt -= mm * 60;
   int hh = (upt % 86400L) / 3600;
-  //upt -= hh * 3600;
   int dd =  upt / 86400L;
   // Create the formatted time
   snprintf_P(buf, len, PSTR("%d days, %02d:%02d:%02d"), dd, hh, mm, ss);
@@ -334,42 +331,19 @@ void showWiFi() {
 }
 
 /**
-  MQTT publishing wrapper, using strings, with retain flag on
-
-  @param topic the MQTT topic
-  @param payload the MQTT message to send to topic
-  @return the publishig status
-*/
-boolean mqttPubRetain(const String &topic, const String &payload) {
-  yield();
-  return mqttClient.publish(topic.c_str(), payload.c_str(), true);
-}
-
-/**
-  MQTT publishing wrapper, using strings
-
-  @param topic the MQTT topic
-  @param payload the MQTT message to send to topic
-  @return the publishig status
-*/
-boolean mqttPub(const String &topic, const String &payload) {
-  yield();
-  return mqttClient.publish(topic.c_str(), payload.c_str(), false);
-}
-
-/**
   Publish char array to topic
 */
 boolean mqttPub(const char *payload, const char *lvl1, const char *lvl2 = NULL, const char *lvl3 = NULL, const boolean retain = false) {
-  char buf[64];
-  strcpy(buf, lvl1);
+  const int bufSize = 100;
+  char buf[bufSize] = "";
+  strncpy(buf, lvl1, bufSize);
   if (lvl2 != NULL) {
-    strcat(buf, "/");
-    strcat(buf, lvl2);
+    strncat(buf, "/", 2);
+    strncat(buf, lvl2, bufSize - strlen(buf) - 1);
   }
   if (lvl3 != NULL) {
-    strcat(buf, "/");
-    strcat(buf, lvl3);
+    strncat(buf, "/", 2);
+    strncat(buf, lvl3, bufSize - strlen(buf) - 1);
   }
   yield();
   return mqttClient.publish(buf, payload, retain);
@@ -383,11 +357,29 @@ boolean mqttPubRet(const char *payload, const char *lvl1, const char *lvl2 = NUL
 }
 
 /**
+  Publish char array from program memory to topic
+*/
+boolean mqttPub_P(const char *payload, const char *lvl1, const char *lvl2 = NULL, const char *lvl3 = NULL, const boolean retain = false) {
+  const int bufSize = 64;
+  char buf[bufSize] = "";
+  strncpy_P(buf, payload, bufSize);
+  return mqttPub(buf, lvl1, lvl2, lvl3, retain);
+}
+
+/**
+  Publish char array from program memory to topic and retain
+*/
+boolean mqttPubRet_P(const char *payload, const char *lvl1, const char *lvl2 = NULL, const char *lvl3 = NULL, const boolean retain = true) {
+  return mqttPub_P(payload, lvl1, lvl2, lvl3, retain);
+}
+
+/**
   Publish integer to topic
 */
 boolean mqttPub(const int payload, const char *lvl1, const char *lvl2 = NULL, const char *lvl3 = NULL, const boolean retain = false) {
-  char buf[8];
-  sprintf(buf, "%d", payload);
+  const int bufSize = 16;
+  char buf[bufSize] = "";
+  snprintf_P(buf, bufSize, PSTR("%d"), payload);
   return mqttPub(buf, lvl1, lvl2, lvl3, retain);
 }
 
@@ -402,13 +394,14 @@ boolean mqttPubRet(const int payload, const char *lvl1, const char *lvl2 = NULL,
   Subscribe to topic or topic/subtopic
 */
 void mqttSubscribe(const char *lvl1, const char *lvl2 = NULL, bool all = false) {
-  char buf[64];
-  strcpy(buf, lvl1);
+  const int bufSize = 100;
+  char buf[bufSize] = "";
+  strncpy(buf, lvl1, bufSize);
   if (lvl2 != NULL) {
-    strcat_P(buf, PSTR("/"));
-    strcat(buf, lvl2);
+    strncat(buf, "/", 2);
+    strncat(buf, lvl2, bufSize - strlen(buf) - 1);
   }
-  if (all) strcat_P(buf, PSTR("/#"));
+  if (all) strncat_P(buf, PSTR("/#"), 3);
   mqttClient.subscribe(buf);
 }
 
@@ -419,16 +412,17 @@ void mqttSubscribe(const char *lvl1, const char *lvl2 = NULL, bool all = false) 
 */
 boolean mqttReconnect() {
   Serial.println(F("MQTT connecting..."));
-  char buf[32];
-  strcpy(buf, mqttTopicRpt);
-  strcat(buf, "/");
-  strcat(buf, nodename);
+  const int bufSize = 64;
+  char buf[bufSize];
+  strncpy(buf, mqttTopicRpt, bufSize);
+  strncat(buf, "/", 2);
+  strncat(buf, nodename, bufSize - strlen(buf) - 1);
   if (mqttClient.connect(mqttId, buf, 0, true, "offline")) {
     // Publish the "online" status
-    mqttPubRet("online", buf);
-    
+    mqttPubRet_P(PSTR("online"), buf);
+
     // Publish the connection report
-    strcat(buf, "/wifi");
+    strncat_P(buf, PSTR("/wifi"), bufSize - strlen(buf) - 1);
     mqttPubRet(WiFi.hostname().c_str(), buf, "hostname");
     mqttPubRet(WiFi.macAddress().c_str(), buf, "mac");
     mqttPubRet(WiFi.SSID().c_str(), buf, "ssid");
@@ -438,9 +432,9 @@ boolean mqttReconnect() {
     mqttPubRet(ipbuf, buf, "ip");
     charIP(WiFi.gatewayIP(), ipbuf, sizeof(ipbuf));
     mqttPubRet(ipbuf, buf, "gw");
-    
-    // Subscribe
-    mqttSubscribe(mqttTopicCmd, nodename,  true);  // Subscribe to command topic
+
+    // Subscribe to command topic
+    mqttSubscribe(mqttTopicCmd, nodename, true);
 
     Serial.print(F("MQTT connected to "));
     Serial.println(mqttServer);
@@ -490,11 +484,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Feedback notification when SoftAP is started
 */
 void wifiCallback(WiFiManager *wifiMgr) {
-  String text;
-  text.reserve(50);
-  text  = "Connect to ";
-  text += wifiMgr->getConfigPortalSSID();
-  Serial.println(text);
+  Serial.print(F("Connect to "));
+  Serial.println(wifiMgr->getConfigPortalSSID());
 }
 
 /**
@@ -1019,12 +1010,15 @@ void loop() {
     // Set the telemetry bit 7 if the station is being probed
     if (PROBE) aprsTlmBits = B10000000;
 
+    // Text buffer
+    char text[16] = "";
+
     // Read the light sensor TSL2561
     // TODO Adapt the shutter
     unsigned int luxVis = 0, luxIrd = 0;
     double lux = -1;
     if (!lightOK) {
-      // Try to reinitialize the sensor
+      // Check again whether the sensor is present
       light.begin();
       unsigned char ID;
       if (light.getID(ID)) {
@@ -1039,10 +1033,13 @@ void loop() {
       if (light.getData(luxVis, luxIrd)) {
         boolean good = light.getLux(lightGain, lightMS, luxVis, luxIrd, lux);
         if (good) {
-          // Send to MQTT
-          mqttPub(MQTT_SENSOR + "/illuminance", String(lux, 2));
-          mqttPub(MQTT_SENSOR + "/visible",     String(luxVis));
-          mqttPub(MQTT_SENSOR + "/infrared",    String(luxIrd));
+          // Compose and publish the telemetry
+          snprintf_P(text, sizeof(text), PSTR("%d"), lux);
+          mqttPub(text, mqttTopicSns, "illuminance");
+          snprintf_P(text, sizeof(text), PSTR("%d"), luxVis);
+          mqttPub(text, mqttTopicSns, "visible");
+          snprintf_P(text, sizeof(text), PSTR("%d"), luxIrd);
+          mqttPub(text, mqttTopicSns, "infrared");
         }
         else {
           lux = -1;
@@ -1059,10 +1056,8 @@ void loop() {
 
     // Read the athmospheric sensor BME280
     float temp, pres, slvl, hmdt, dewp;
-    if (!atmoOK) {
-      // Try to reinitialize the sensor
-      atmoOK = atmo.begin() == 0x60;
-    }
+    // Check again whether the sensor is present
+    if (!atmoOK) atmoOK = atmo.begin() == 0x60;
     if (atmoOK) {
       // Set the bit 5 to show the sensor is present (reverse)
       aprsTlmBits |= B01000000;
@@ -1078,33 +1073,43 @@ void loop() {
       rmTemp.add(temp);
       rmHmdt.add(hmdt);
       rmPres.add(slvl);
-      // Send to MQTT
-      mqttPub(MQTT_SENSOR + "/temperature", String(temp, 2));
-      mqttPub(MQTT_SENSOR + "/humidity",    String(hmdt, 2));
-      mqttPub(MQTT_SENSOR + "/dewpoint",    String(dewp, 2));
-      mqttPub(MQTT_SENSOR + "/pressure",    String(pres / 100, 2));
-      mqttPub(MQTT_SENSOR + "/sealevel",    String(slvl / 100, 2));
+      // Compose and publish the telemetry
+      mqttPub((int)temp, mqttTopicSns, "temperature");
+      mqttPub((int)hmdt, mqttTopicSns, "humidity");
+      mqttPub((int)dewp, mqttTopicSns, "dewpoint");
+      mqttPub((int)(pres / 100), mqttTopicSns, "pressure");
+      mqttPub((int)(slvl / 100), mqttTopicSns, "sealevel");
     }
 
     // Various telemetry
     int rssi = WiFi.RSSI();
     int heap = ESP.getFreeHeap();
     int vcc  = ESP.getVcc();
-    if (vcc < 3000) {
-      // Set the bit 3 to show the battery is low
-      aprsTlmBits |= B00001000;
-    }
+    // Set the bit 3 to show the battery is wrong (3.3V +/- 10%)
+    if (vcc < 3000 or vcc > 3600) aprsTlmBits |= B00001000;
     // Running Median
     rmVcc.add(vcc);
     rmRSSI.add(rssi);
     rmHeap.add(heap);
-    // Send to MQTT
-    mqttPub(MQTT_REPORT_WIFI + "/rssi",   String(rssi));
-    mqttPub(MQTT_REPORT + "/uptime",      String(millis() / 1000));
-    // FIXME
-    //mqttPub(MQTT_REPORT + "/uptime/text", NTP.getUptimeString());
-    mqttPub(MQTT_REPORT + "/heap",        String(heap));
-    mqttPub(MQTT_REPORT + "/vcc",         String((float)vcc / 1000, 3));
+    // Create the topic
+    char topic[32];
+    strncpy(topic, mqttTopicRpt, sizeof(topic));
+    strncat(topic, "/", 2);
+    strncat(topic, nodename, sizeof(topic) - strlen(topic) - 1);
+    // Uptime
+    char upt[32] = "";
+    unsigned long ups = 0;
+    ups = uptime(upt, sizeof(upt));
+    snprintf_P(text, sizeof(text), PSTR("%d"), ups);
+    mqttPubRet(text, topic, "uptime");
+    mqttPubRet(upt, topic, "uptime", "text");
+    // Free heap
+    mqttPubRet(heap, topic, "heap");
+    // Power supply
+    snprintf_P(text, sizeof(text), PSTR("%d.%d"), vcc / 1000, vcc % 1000);
+    mqttPubRet(text, topic, "vcc");
+    // Add the WiFi topic and publish the RSSI value
+    mqttPubRet(rssi, topic, "wifi", "rssi");
 
     // APRS (after the first 3600/(aprsMsrmMax*aprsRprtHour) seconds,
     //       then every 60/aprsRprtHour minutes)
@@ -1121,7 +1126,7 @@ void loop() {
       };
     }
 
-    // Repeat sensor reading
+    // Repeat after the delay
     snsNextTime += snsDelay;
   }
 }
