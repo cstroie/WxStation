@@ -122,7 +122,7 @@ int       aprsTlmSeq     = 0;  // Telemetry sequence mumber
 char      aprsTlmBits    = B00000000;
 
 // The APRS packet buffer, largest packet is 82 for v2.1
-char       aprsPkt[100]           = "";
+char      aprsPkt[100]   = "";
 
 // Statistics (round median filter for the last 3 values)
 enum      rMedIdx {MD_TEMP, MD_HMDT, MD_PRES, MD_SRAD, MD_VISI, MD_IRED, MD_RSSI, MD_VCC, MD_HEAP, MD_ALL};
@@ -139,7 +139,7 @@ BME280              atmo;                                                 // The
 bool                atmoOK      = false;                                  // The athmospheric sensor presence flag
 // TSL2561
 const byte          lightAddr   = 0x23;                                   // The illuminance sensor I2C address
-SFE_TSL2561         light();                                              // The illuminance sensor
+SFE_TSL2561         light;                                                // The illuminance sensor
 bool                lightOK     = false;                                  // The illuminance sensor presence flag
 boolean             lightGain   = false;                                  //    ~    ~    ~    ~    gain (true/false)
 unsigned char       lightSHTR   = 1;                                      //    ~    ~    ~    ~    shutter (0, 1, 2)
@@ -178,7 +178,51 @@ float rgY[rgMax];                         // The circular buffer
 float rgAB[] = {0, 0, 0};                 // Coefficients: a, b and std dev in f(x)=ax+b
 
 
+#undef max
+#define max(a,b) ((a)>(b)?(a):(b))
+#undef min
+#define min(a,b) ((a)<(b)?(a):(b))
 
+
+/**
+  Simple median filter: get the median
+  2014-03-25: started by David Cary
+
+  @param idx the index in round median array
+  @return the median
+*/
+int rMedOut(int idx) {
+  // Return the last value if the buffer is not full yet
+  if (rMed[idx][0] < 3) return rMed[idx][3];
+  else {
+    // Get the maximum and the minimum
+    int the_max = max(max(rMed[idx][1], rMed[idx][2]), rMed[idx][3]);
+    int the_min = min(min(rMed[idx][1], rMed[idx][2]), rMed[idx][3]);
+    // Clever code: XOR the max and min, remaining the middle
+    return the_max ^ the_min ^ rMed[idx][1] ^ rMed[idx][2] ^ rMed[idx][3];
+  }
+}
+
+/**
+  Simple median filter: add value to array
+
+  @param idx the index in round median array
+  @param x the value to add
+*/
+void rMedIn(int idx, int x) {
+  // At index 0 there is the number of values stored
+  if (rMed[idx][0] < 3) rMed[idx][0]++;
+  // Shift one position
+  rMed[idx][1] = rMed[idx][2];
+  rMed[idx][2] = rMed[idx][3];
+  rMed[idx][3] = x;
+#ifdef DEBUG
+  Serial.print(F("RMed "));
+  Serial.print(idx);
+  Serial.print(F(": "));
+  Serial.println(x);
+#endif
+}
 
 /**
   Convert IPAddress to char array
@@ -547,7 +591,7 @@ void aprsAuthenticate() {
 */
 // FIXME
 /**
-void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
+  void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
   String zbLR;
   // Temperature will be in Fahrenheit
   float fahr = temp * 9 / 5 + 32;
@@ -597,7 +641,7 @@ void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
   pkt += zbLR; //NODENAME;
   // Send the packet
   aprsSend(pkt);
-}
+  }
 */
 void aprsSendWeather(int temp, int hmdt, int pres, int lux) {
   char buf[8];
@@ -665,7 +709,7 @@ void aprsSendTelemetry(int vcc, int rssi, int heap, unsigned int luxVis, unsigne
   strcat_P(aprsPkt, PSTR("T"));
   char buf[40];
   // TODO
-  snprintf_P(buf, sizeof(buf), PSTR("#%03d,%03d,%03d,%03d,%03d,%03d,"), aprsTlmSeq, (vcc - 2500) / 4, -rssi, heap / 200, luxVis / 256, luxIrd / 256);
+  snprintf_P(buf, sizeof(buf), PSTR("#%03d,%03d,%03d,%03d,%03d,%03d,"), aprsTlmSeq, vcc, rssi, heap, luxVis, luxIrd);
   strncat(aprsPkt, buf, sizeof(buf));
   itoa(bits, buf, 2);
   strncat(aprsPkt, buf, sizeof(buf));
@@ -1018,11 +1062,35 @@ void loop() {
   // TODO
   // Read the sensors and publish telemetry
   if (millis() >= snsNextTime) {
+
     // Count to check if we need to send the APRS data
-    if (++aprsMsrmCount > aprsMsrmMax) aprsMsrmCount = 1;
+    if (++aprsMsrmCount >= aprsMsrmMax) {
+      // Restart the counter
+      aprsMsrmCount = 0;
+      // Repeat sensor reading after the 'before' delay (long)
+      snsNextTime += snsDelayBfr;
+    }
+    else {
+      // Repeat sensor reading after the 'between' delay (short)
+      snsNextTime += snsDelayBtw;
+    }
     // Set the telemetry bit 7 if the station is being probed
     if (PROBE) aprsTlmBits = B10000000;
+    else       aprsTlmBits = B00000000;
 
+#ifdef DEBUG
+    Serial.print(F("Sensor reading "));
+    Serial.println(aprsMsrmCount);
+#endif
+
+
+
+    /*
+      // Count to check if we need to send the APRS data
+      if (++aprsMsrmCount > aprsMsrmMax) aprsMsrmCount = 1;
+      // Set the telemetry bit 7 if the station is being probed
+      if (PROBE) aprsTlmBits = B10000000;
+    */
     // Text buffer
     char text[16] = "";
 
@@ -1044,6 +1112,7 @@ void loop() {
       // Set the bit 5 to show the sensor is present (reverse)
       aprsTlmBits |= B00100000;
       if (light.getData(luxVis, luxIrd)) {
+        int solRad = -1;
         boolean good = light.getLux(lightGain, lightMS, luxVis, luxIrd, lux);
         if (good) {
           // Compose and publish the telemetry
@@ -1053,18 +1122,31 @@ void loop() {
           mqttPub(text, mqttTopicSns, "visible");
           snprintf_P(text, sizeof(text), PSTR("%d"), luxIrd);
           mqttPub(text, mqttTopicSns, "infrared");
+          // Calculate the solar radiation in W/m^2
+          solRad = (int)(lux * 0.0079);
+          // If the sensor is saturated, limit the reading to maximum value
+          if (solRad > 999) solRad = 999;
         }
         else {
+          // Saturated
           lux = -1;
+          // If the sensor is saturated, limit the reading to maximum value
+          if (solRad > 999) solRad = 999;
           // Set the bit 4 to show the sensor is saturated
           aprsTlmBits |= B00010000;
         }
+        // Add to round median filter
+        rMedIn(MD_SRAD, solRad);
+        rMedIn(MD_VISI, luxVis);
+        rMedIn(MD_IRED, luxIrd);
+      }
+      else {
+        // Store invalid values if no sensor
+        rMedIn(MD_SRAD, -1);
+        rMedIn(MD_VISI, 0);
+        rMedIn(MD_IRED, 0);
       }
     }
-    // Running Median
-    rmLux.add(lux);
-    rmVisi.add(luxVis);
-    rmIRed.add(luxIrd);
     yield();
 
     // Read the athmospheric sensor BME280
@@ -1082,10 +1164,10 @@ void loop() {
       dewp = 243.04 *
              (log(hmdt / 100.0) + ((17.625 * temp) / (243.04 + temp))) /
              (17.625 - log(hmdt / 100.0) - ((17.625 * temp) / (243.04 + temp)));
-      // Running Median
-      rmTemp.add(temp);
-      rmHmdt.add(hmdt);
-      rmPres.add(slvl);
+      // Add to the round median filter
+      rMedIn(MD_TEMP, (int)(temp * 9 / 5 + 32));      // Store directly integer Fahrenheit
+      rMedIn(MD_PRES, (int)(slvl / 10));              // Store directly sea level in dPa
+      rMedIn(MD_HMDT, (int)hmdt);                     // Humidity
       // Compose and publish the telemetry
       mqttPub((int)temp, mqttTopicSns, "temperature");
       mqttPub((int)hmdt, mqttTopicSns, "humidity");
@@ -1093,17 +1175,26 @@ void loop() {
       mqttPub((int)(pres / 100), mqttTopicSns, "pressure");
       mqttPub((int)(slvl / 100), mqttTopicSns, "sealevel");
     }
+    else {
+      // Store invalid values if no sensor
+      rMedIn(MD_TEMP, -500);
+      rMedIn(MD_PRES, -1);
+      rMedIn(MD_HMDT, -1);
+    }
+    yield();
 
-    // Various telemetry
-    int rssi = WiFi.RSSI();
+    // Free Heap
     int heap = ESP.getFreeHeap();
+    rMedIn(MD_HEAP, heap);
+    // Read the Vcc (mV) and add to the round median filter
     int vcc  = ESP.getVcc();
+    rMedIn(MD_VCC, vcc);
     // Set the bit 3 to show the battery is wrong (3.3V +/- 10%)
     if (vcc < 3000 or vcc > 3600) aprsTlmBits |= B00001000;
-    // Running Median
-    rmVcc.add(vcc);
-    rmRSSI.add(rssi);
-    rmHeap.add(heap);
+    // Get RSSI
+    int rssi = WiFi.RSSI();
+    if (rssi) rMedIn(MD_RSSI, -rssi);
+
     // Create the topic
     char topic[32];
     strncpy(topic, mqttTopicRpt, sizeof(topic));
@@ -1135,15 +1226,13 @@ void loop() {
         if (millis() < snsDelayBfr) aprsSendPosition();
         // Send weather data
         aprsSendWeather(rMedOut(MD_TEMP), rMedOut(MD_HMDT), rMedOut(MD_PRES), rMedOut(MD_SRAD));
-        //if (atmoOK) aprsSendWeather(rmTemp.getMedian(), rmHmdt.getMedian(), rmPres.getMedian(), rmLux.getMedian());
         // Send the telemetry
-        aprsSendTelemetry(rMedOut(MD_A0) / 20,
-                          rMedOut(MD_DHTT),
+        aprsSendTelemetry(rMedOut(MD_VCC) >> 4 - 625,
                           rMedOut(MD_RSSI),
-                          rMedOut(MD_VCC) / 4 - 1125,
-                          rMedOut(MD_MCU) / 100 + 100,
+                          rMedOut(MD_HEAP) / 200,
+                          rMedOut(MD_VISI) >> 8,
+                          rMedOut(MD_IRED) >> 8,
                           aprsTlmBits);
-        //aprsSendTelemetry(rmVcc.getMedian(), rmRSSI.getMedian(), rmHeap.getMedian(), rmVisi.getMedian(), rmIRed.getMedian(), aprsTlmBits);
         //aprsSendStatus("Fine weather");
         // Close the connection
         aprsClient.stop();
@@ -1151,6 +1240,6 @@ void loop() {
     }
 
     // Repeat after the delay
-    snsNextTime += snsDelay;
+    //snsNextTime += snsDelay;
   }
 }
