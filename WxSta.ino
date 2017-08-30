@@ -95,20 +95,20 @@ const char          mqttTopicSns[] = "sensor/outdoor";
 const char          mqttTopicRpt[] = "report";
 
 // APRS parameters
-WiFiClient  aprsClient;                                 // WiFi TCP client for APRS
-const char  aprsServer[] PROGMEM  = "cwop5.aprs.net";   // CWOP APRS-IS server address to connect to
-const int   aprsPort              = 14580;              // CWOP APRS-IS port
-const int   altMeters             = 83;                 // Altitude in Bucharest
-const long  altFeet = (long)(altMeters * 3.28084);                                    // Altitude in feet
-const float altCorr = pow((float)(1.0 - 2.25577e-5 * altMeters), (float)(-5.25578));  // Altitude correction for QNH
+WiFiClient  aprsClient;                                                                     // WiFi TCP client for APRS
+const char  aprsServer[]  = "cwop5.aprs.net";                                               // CWOP APRS-IS server address to connect to
+const int   aprsPort      = 14580;                                                          // CWOP APRS-IS port
+const int   altMeters     = 83;                                                             // Altitude in Bucharest
+const long  altFeet       = (long)(altMeters * 3.28084);                                    // Altitude in feet
+const float altCorr       = pow((float)(1.0 - 2.25577e-5 * altMeters), (float)(-5.25578));  // Altitude correction for QNH
 
 const char aprsCallSign[] PROGMEM = "FW0690";
 const char aprsPassCode[] PROGMEM = "-1";
 const char aprsPath[]     PROGMEM = ">APRS,TCPIP*:";
 const char aprsLocation[] PROGMEM = "4427.67N/02608.03E_";
-const char aprsTlmPARM[]  PROGMEM = ":PARM.Vcc,RSSI,Heap,IRed,Visb,PROBE,ATMO,LUX,SAT,BAT,B6,B7,B8";
-const char aprsTlmEQNS[]  PROGMEM = ":EQNS.0,0.004,2.5,0,-1,0,0,200,0,0,256,0,0,256,0";
-const char aprsTlmUNIT[]  PROGMEM = ":UNIT.V,dBm,Bytes,units,units,prb,on,on,sat,low,N/A,N/A,N/A";
+const char aprsTlmPARM[]  PROGMEM = ":PARM.Vcc,RSSI,Heap,IRed,Visb,PROBE,ATMO,LUX,SAT,VCC,HT,RB,TM";
+const char aprsTlmEQNS[]  PROGMEM = ":EQNS.0,0.004,2.5,0,-1,0,0,256,0,0,256,0,0,256,0";
+const char aprsTlmUNIT[]  PROGMEM = ":UNIT.V,dBm,Bytes,units,units,prb,on,on,sat,bad,ht,rb,er";
 const char aprsTlmBITS[]  PROGMEM = ":BITS.10011111, ";
 const char eol[]          PROGMEM = "\r\n";
 
@@ -126,7 +126,7 @@ char      aprsPkt[100]   = "";
 
 // Statistics (round median filter for the last 3 values)
 enum      rMedIdx {MD_TEMP, MD_HMDT, MD_PRES, MD_SRAD, MD_VISI, MD_IRED, MD_RSSI, MD_VCC, MD_HEAP, MD_ALL};
-int       rMed[MD_ALL][4];
+int       rMed[MD_ALL][4] = {0, -1, -1, -1};
 
 // Sensors
 const unsigned long snsReadTime = 30UL * 1000UL;                          // Total time to read sensors, repeatedly, for aprsMsrmMax times
@@ -149,34 +149,64 @@ unsigned int        lightMS;                                              //    
 ADC_MODE(ADC_VCC);
 
 // Zambretti forecaster
-int zbBaroTop = 105000;       // Highest athmospheric pressure
-int zbBaroBot = 95000;        // Lowest athmospheric pressure
-int zbBaroTrs = 100;          // Pressure threshold
-const int zbHours = 3;        // Need the last 3 hours for forecast
-int zbDelay = 3600;           // Report hourly
-unsigned long zbNextTime = 0; // The next time to report, collect data till then
-// Forecast texts
-String zbFcast[] = {"Settled fine", "Fine weather", "Becoming fine", "Fine, becoming less settled", "Fine, possible showers",
-                    "Fairly fine, improving", "Fairly fine, possible showers early", "Fairly fine, showery later",
-                    "Showery early, improving", "Changeable, mending", "Fairly fine, showers likely",
-                    "Rather unsettled clearing later", "Unsettled, probably improving", "Showery, bright intervals",
-                    "Showery, becoming less settled", "Changeable, some rain", "Unsettled, short fine intervals",
-                    "Unsettled, rain later", "Unsettled, some rain", "Mostly very unsettled", "Occasional rain, worsening",
-                    "Rain at times, very unsettled", "Rain at frequent intervals", "Rain, very unsettled",
-                    "Stormy, may improve", "Stormy, much rain"
-                   };
-// Forecast selectors for rising, steady and falling trend
-int zbRs[] = {25, 25, 25, 24, 24, 19, 16, 12, 11, 9, 8, 6, 5, 2, 1, 1, 0, 0, 0, 0, 0, 0};
-int zbSt[] = {25, 25, 25, 25, 25, 25, 23, 23, 22, 18, 15, 13, 10, 4, 1, 1, 0, 0, 0, 0, 0, 0};
-int zbFl[] = {25, 25, 25, 25, 25, 25, 25, 25, 23, 23, 21, 20, 17, 14, 7, 3, 1, 1, 1, 0, 0, 0};
+int           zbBaroTop   = 105000;                 // Highest athmospheric pressure
+int           zbBaroBot   = 95000;                  // Lowest athmospheric pressure
+int           zbBaroTrs   = 100;                    // Pressure threshold
+const int     zbHours     = 3;                      // Need the last 3 hours for forecast
+int           zbDelay     = 3600000UL;              // Report hourly
+unsigned long zbNextTime  = 0;                      // The next time to report, collect data till then
 
 // Linear regression computer
-const int rgMax = zbHours * aprsRprtHour; // The size of the circular buffer
-int rgIdx = 0;                            // Index in circular buffers
-int rgCnt = 0;                            // Counter of current values in buffer
-float rgY[rgMax];                         // The circular buffer
-float rgAB[] = {0, 0, 0};                 // Coefficients: a, b and std dev in f(x)=ax+b
+const int     rgMax       = zbHours * aprsRprtHour; // The size of the circular buffer
+int           rgIdx       = 0;                      // Index in circular buffer
+int           rgCnt       = 0;                      // Counter of current values in buffer
+float         rgY[rgMax]  = {0};                    // The circular buffer
+float         rgAB[]      = {0, 0, 0};              // Coefficients: a, b and std dev in f(x)=ax+b
 
+// Forecast texts
+const char zbFcA[] PROGMEM = "Settled fine";
+const char zbFcB[] PROGMEM = "Fine weather";
+const char zbFcC[] PROGMEM = "Becoming fine";
+const char zbFcD[] PROGMEM = "Fine, becoming less settled";
+const char zbFcE[] PROGMEM = "Fine, possible showers";
+const char zbFcF[] PROGMEM = "Fairly fine, improving";
+const char zbFcG[] PROGMEM = "Fairly fine, possible showers early";
+const char zbFcH[] PROGMEM = "Fairly fine, showery later";
+const char zbFcI[] PROGMEM = "Showery early, improving";
+const char zbFcJ[] PROGMEM = "Changeable, mending";
+const char zbFcK[] PROGMEM = "Fairly fine, showers likely";
+const char zbFcL[] PROGMEM = "Rather unsettled clearing later";
+const char zbFcM[] PROGMEM = "Unsettled, probably improving";
+const char zbFcN[] PROGMEM = "Showery, bright intervals";
+const char zbFcO[] PROGMEM = "Showery, becoming less settled";
+const char zbFcP[] PROGMEM = "Changeable, some rain";
+const char zbFcQ[] PROGMEM = "Unsettled, short fine intervals";
+const char zbFcR[] PROGMEM = "Unsettled, rain later";
+const char zbFcS[] PROGMEM = "Unsettled, some rain";
+const char zbFcT[] PROGMEM = "Mostly very unsettled";
+const char zbFcU[] PROGMEM = "Occasional rain, worsening";
+const char zbFcV[] PROGMEM = "Rain at times, very unsettled";
+const char zbFcW[] PROGMEM = "Rain at frequent intervals";
+const char zbFcX[] PROGMEM = "Rain, very unsettled";
+const char zbFcY[] PROGMEM = "Stormy, may improve";
+const char zbFcZ[] PROGMEM = "Stormy, much rain";
+const char* const zbFc[] PROGMEM = {zbFcA, zbFcB, zbFcC, zbFcD, zbFcE, zbFcF, zbFcG,
+                                    zbFcH, zbFcI, zbFcJ, zbFcK, zbFcL, zbFcM, zbFcN,
+                                    zbFcO, zbFcP, zbFcQ, zbFcR, zbFcS, zbFcT, zbFcU,
+                                    zbFcV, zbFcW, zbFcX, zbFcY, zbFcZ
+                                   };
+
+// Forecast selectors for rising, steady and falling trend
+int zbRs[] = {25, 25, 25, 24, 24, 19, 16, 12, 11,  9,  8,  6,  5,  2,  1,  1,  0,  0,  0,  0,  0,  0};
+int zbSt[] = {25, 25, 25, 25, 25, 25, 23, 23, 22, 18, 15, 13, 10,  4,  1,  1,  0,  0,  0,  0,  0,  0};
+int zbFl[] = {25, 25, 25, 25, 25, 25, 25, 25, 23, 23, 21, 20, 17, 14,  7,  3,  1,  1,  1,  0,  0,  0};
+
+// Various
+const char pstrD[]  PROGMEM = "%d";
+const char pstrDD[] PROGMEM = "%d.%d";
+const char pstrSP[] PROGMEM = " ";
+const char pstrCL[] PROGMEM = ":";
+const char pstrSL[] PROGMEM = "/";
 
 #undef max
 #define max(a,b) ((a)>(b)?(a):(b))
@@ -382,11 +412,11 @@ boolean mqttPub(const char *payload, const char *lvl1, const char *lvl2 = NULL, 
   char buf[bufSize] = "";
   strncpy(buf, lvl1, bufSize);
   if (lvl2 != NULL) {
-    strncat(buf, "/", 2);
+    strcat_P(buf, pstrSL);
     strncat(buf, lvl2, bufSize - strlen(buf) - 1);
   }
   if (lvl3 != NULL) {
-    strncat(buf, "/", 2);
+    strcat_P(buf, pstrSL);
     strncat(buf, lvl3, bufSize - strlen(buf) - 1);
   }
   yield();
@@ -423,7 +453,7 @@ boolean mqttPubRet_P(const char *payload, const char *lvl1, const char *lvl2 = N
 boolean mqttPub(const int payload, const char *lvl1, const char *lvl2 = NULL, const char *lvl3 = NULL, const boolean retain = false) {
   const int bufSize = 16;
   char buf[bufSize] = "";
-  snprintf_P(buf, bufSize, PSTR("%d"), payload);
+  snprintf_P(buf, bufSize, pstrD, payload);
   return mqttPub(buf, lvl1, lvl2, lvl3, retain);
 }
 
@@ -442,10 +472,10 @@ void mqttSubscribe(const char *lvl1, const char *lvl2 = NULL, bool all = false) 
   char buf[bufSize] = "";
   strncpy(buf, lvl1, bufSize);
   if (lvl2 != NULL) {
-    strncat(buf, "/", 2);
+    strcat_P(buf, pstrSL);
     strncat(buf, lvl2, bufSize - strlen(buf) - 1);
   }
-  if (all) strncat_P(buf, PSTR("/#"), 3);
+  if (all) strcat_P(buf, PSTR("/#"));
   mqttClient.subscribe(buf);
 }
 
@@ -459,14 +489,14 @@ boolean mqttReconnect() {
   const int bufSize = 64;
   char buf[bufSize];
   strncpy(buf, mqttTopicRpt, bufSize);
-  strncat(buf, "/", 2);
-  strncat(buf, nodename, bufSize - strlen(buf) - 1);
+  strcat_P(buf, pstrSL);
+  strcat(buf, nodename);
   if (mqttClient.connect(mqttId, buf, 0, true, "offline")) {
     // Publish the "online" status
-    mqttPubRet_P(PSTR("online"), buf);
+    mqttPubRet("online", buf);
 
     // Publish the connection report
-    strncat_P(buf, PSTR("/wifi"), bufSize - strlen(buf) - 1);
+    strcat_P(buf, PSTR("/wifi"));
     mqttPubRet(WiFi.hostname().c_str(), buf, "hostname");
     mqttPubRet(WiFi.macAddress().c_str(), buf, "mac");
     mqttPubRet(WiFi.SSID().c_str(), buf, "ssid");
@@ -538,7 +568,7 @@ void wifiCallback(WiFiManager *wifiMgr) {
   @param *pkt the packet to send
 */
 void aprsSend(const char *pkt) {
-  aprsClient.print(pkt);
+  //aprsClient.print(pkt);
   yield();
   //aprsClient.write((uint8_t *)pkt, strlen(pkt));
 #ifdef DEBUG
@@ -573,8 +603,8 @@ void aprsAuthenticate() {
   strcat_P(aprsPkt, PSTR(" pass "));
   strcat_P(aprsPkt, aprsPassCode);
   strcat_P(aprsPkt, PSTR(" vers "));
-  strcat_P(aprsPkt, NODENAME);
-  strcat_P(aprsPkt, PSTR(" "));
+  strcat  (aprsPkt, NODENAME);
+  strcat_P(aprsPkt, pstrSP);
   strcat_P(aprsPkt, VERSION);
   strcat_P(aprsPkt, eol);
   aprsSend(aprsPkt);
@@ -585,78 +615,34 @@ void aprsAuthenticate() {
   FW0690>APRS,TCPIP*:@152457h4427.67N/02608.03E_.../...g...t044h86b10201L001WxSta
 
   @param temp temperature
-  @param hmdt humidity
-  @param pres athmospheric pressure
-  @param lux illuminance
+  @param hmdt relative humidity
+  @param pres athmospheric pressure (QNH)
+  @param srad solar radiation
 */
-// FIXME
-/**
-  void aprsSendWeather(float temp, float hmdt, float pres, float lux) {
-  String zbLR;
-  // Temperature will be in Fahrenheit
-  float fahr = temp * 9 / 5 + 32;
-  // Try to get and send the Zambretti forecast
-  int zbNumber = zbForecast(pres);
-  if (zbNumber >= 0) {
-    aprsSendStatus(zbFcast[zbNumber]);
-    zbLR.reserve(50);
-    zbLR  = " Eq: A=";
-    zbLR += String(rgAB[0], 6);
-    zbLR += ", B=";
-    zbLR += String(rgAB[1] / 100, 2);
-    zbLR += ", S=";
-    zbLR += String(rgAB[2], 6);
+void aprsSendWeather(int temp, int hmdt, int pres, int srad) {
+  // Forecast as status report
+  int zbCode = zbForecast((float)pres);
+  if (zbCode >= 0) {
+    const int bufSize = 40;
+    char buf[bufSize] = "";
+    strncpy_P(buf, (char*)pgm_read_word(&(zbFc[zbCode])), bufSize);
+    aprsSendStatus(buf);
   }
-  // Compose the APRS packet
-  String pkt;
-  pkt.reserve(200);
-  pkt  = aprsHeader;
-  pkt += "@";
-  pkt += aprsTime();
-  pkt += aprsLocation;
-  // Wind (unavailable)
-  pkt += ".../...g...";
-  // Temperature
-  pkt += "t";
-  if (temp >= -273.15) pkt += zeroPad(fahr, 3);
-  else                 pkt += "...";
-  // Humidity
-  if (hmdt >= 0) {
-    pkt += "h";
-    if (hmdt == 100) pkt += "00";
-    else             pkt += zeroPad(hmdt, 2);
-  }
-  // Athmospheric pressure
-  if (pres >= 0) {
-    pkt += "b";
-    pkt += zeroPad(pres / 10, 5);
-  }
-  // Illuminance, if valid
-  // For the SUN, there is an approximate conversion of 0.0079 W/m2 per Lux
-  if (lux >= 0) {
-    pkt += "L";
-    pkt += zeroPad(lux * 0.0079, 3);
-  }
-  // Comment (device name)
-  pkt += zbLR; //NODENAME;
-  // Send the packet
-  aprsSend(pkt);
-  }
-*/
-void aprsSendWeather(int temp, int hmdt, int pres, int lux) {
-  char buf[8];
+  // Weather report
+  const int bufSize = 8;
+  char buf[bufSize] = "";
   strcpy_P(aprsPkt, aprsCallSign);
   strcat_P(aprsPkt, aprsPath);
   strcat_P(aprsPkt, PSTR("@"));
-  aprsTime(buf, sizeof(buf));
-  strncat(aprsPkt, buf, sizeof(buf));
+  aprsTime(buf, bufSize);
+  strncat(aprsPkt, buf, bufSize);
   strcat_P(aprsPkt, aprsLocation);
   // Wind (unavailable)
   strcat_P(aprsPkt, PSTR(".../...g..."));
   // Temperature
   if (temp >= -460) { // 0K in F
-    sprintf_P(buf, PSTR("t%03d"), temp);
-    strncat(aprsPkt, buf, sizeof(buf));
+    snprintf_P(buf, bufSize, PSTR("t%03d"), temp);
+    strncat(aprsPkt, buf, bufSize);
   }
   else {
     strcat_P(aprsPkt, PSTR("t..."));
@@ -667,19 +653,19 @@ void aprsSendWeather(int temp, int hmdt, int pres, int lux) {
       strcat_P(aprsPkt, PSTR("h00"));
     }
     else {
-      sprintf_P(buf, PSTR("h%02d"), hmdt);
-      strncat(aprsPkt, buf, sizeof(buf));
+      snprintf_P(buf, bufSize, PSTR("h%02d"), hmdt);
+      strncat(aprsPkt, buf, bufSize);
     }
   }
   // Athmospheric pressure
   if (pres >= 0) {
-    sprintf_P(buf, PSTR("b%05d"), pres);
-    strncat(aprsPkt, buf, sizeof(buf));
+    snprintf_P(buf, bufSize, PSTR("b%05d"), pres);
+    strncat(aprsPkt, buf, bufSize);
   }
   // Illuminance, if valid
-  if (lux >= 0 and lux <= 999) {
-    sprintf_P(buf, PSTR("L%03d"), lux);
-    strncat(aprsPkt, buf, sizeof(buf));
+  if (srad >= 0 and srad <= 999) {
+    snprintf_P(buf, bufSize, PSTR("L%03d"), srad);
+    strncat(aprsPkt, buf, bufSize);
   }
   // Comment (device name)
   strcat_P(aprsPkt, DEVICEID);
@@ -698,21 +684,22 @@ void aprsSendWeather(int temp, int hmdt, int pres, int lux) {
   @param luxIrd raw infrared illuminance
   @bits digital inputs
 */
-void aprsSendTelemetry(int vcc, int rssi, int heap, unsigned int luxVis, unsigned int luxIrd, byte bits) {
+void aprsSendTelemetry(int p1, int p2, int p3, int p4, int p5, byte bits) {
   // Increment the telemetry sequence number, reset it if exceeds 999
   if (++aprsTlmSeq > 999) aprsTlmSeq = 0;
   // Send the telemetry setup if the sequence number is 0
   if (aprsTlmSeq == 0) aprsSendTelemetrySetup();
   // Compose the APRS packet
+  const int bufSize = 40;
+  char buf[bufSize] = "";
   strcpy_P(aprsPkt, aprsCallSign);
   strcat_P(aprsPkt, aprsPath);
   strcat_P(aprsPkt, PSTR("T"));
-  char buf[40];
   // TODO
-  snprintf_P(buf, sizeof(buf), PSTR("#%03d,%03d,%03d,%03d,%03d,%03d,"), aprsTlmSeq, vcc, rssi, heap, luxVis, luxIrd);
-  strncat(aprsPkt, buf, sizeof(buf));
+  snprintf_P(buf, bufSize, PSTR("#%03d,%03d,%03d,%03d,%03d,%03d,"), aprsTlmSeq, p1, p2, p3, p4, p5);
+  strncat(aprsPkt, buf, bufSize);
   itoa(bits, buf, 2);
-  strncat(aprsPkt, buf, sizeof(buf));
+  strncat(aprsPkt, buf, bufSize);
   strcat_P(aprsPkt, eol);
   aprsSend(aprsPkt);
 }
@@ -721,42 +708,43 @@ void aprsSendTelemetry(int vcc, int rssi, int heap, unsigned int luxVis, unsigne
   Send APRS telemetry setup
 */
 void aprsSendTelemetrySetup() {
-  char padCallSign[10];
+  const int padSize = 10;
+  char padCallSign[padSize] = " ";
   strcpy_P(padCallSign, aprsCallSign);  // Workaround
   sprintf_P(padCallSign, PSTR("%-9s"), padCallSign);
   // Parameter names
   strcpy_P(aprsPkt, aprsCallSign);
   strcat_P(aprsPkt, aprsPath);
-  strcat_P(aprsPkt, PSTR(":"));
-  strncat(aprsPkt, padCallSign, sizeof(padCallSign));
+  strcat_P(aprsPkt, pstrCL);
+  strncat(aprsPkt, padCallSign, padSize);
   strcat_P(aprsPkt, aprsTlmPARM);
   strcat_P(aprsPkt, eol);
   aprsSend(aprsPkt);
   // Equations
   strcpy_P(aprsPkt, aprsCallSign);
   strcat_P(aprsPkt, aprsPath);
-  strcat_P(aprsPkt, PSTR(":"));
-  strncat(aprsPkt, padCallSign, sizeof(padCallSign));
+  strcat_P(aprsPkt, pstrCL);
+  strncat(aprsPkt, padCallSign, padSize);
   strcat_P(aprsPkt, aprsTlmEQNS);
   strcat_P(aprsPkt, eol);
   aprsSend(aprsPkt);
   // Units
   strcpy_P(aprsPkt, aprsCallSign);
   strcat_P(aprsPkt, aprsPath);
-  strcat_P(aprsPkt, PSTR(":"));
-  strncat(aprsPkt, padCallSign, sizeof(padCallSign));
+  strcat_P(aprsPkt, pstrCL);
+  strncat(aprsPkt, padCallSign, padSize);
   strcat_P(aprsPkt, aprsTlmUNIT);
   strcat_P(aprsPkt, eol);
   aprsSend(aprsPkt);
   // Bit sense and project name
   strcpy_P(aprsPkt, aprsCallSign);
   strcat_P(aprsPkt, aprsPath);
-  strcat_P(aprsPkt, PSTR(":"));
-  strncat(aprsPkt, padCallSign, sizeof(padCallSign));
+  strcat_P(aprsPkt, pstrCL);
+  strncat(aprsPkt, padCallSign, padSize);
   strcat_P(aprsPkt, aprsTlmBITS);
-  strcat_P(aprsPkt, NODENAME);
-  strcat_P(aprsPkt, PSTR("/"));
-  strcat_P(aprsPkt, VERSION);
+  strcat(aprsPkt, NODENAME);
+  strcat_P(aprsPkt, pstrSL);
+  strcat(aprsPkt, VERSION);
   strcat_P(aprsPkt, eol);
   aprsSend(aprsPkt);
 }
@@ -796,60 +784,12 @@ void aprsSendPosition(const char *comment = NULL) {
   char buf[7];
   sprintf_P(buf, PSTR("%06d"), altFeet);
   strncat(aprsPkt, buf, sizeof(buf));
-  strcat_P(aprsPkt, PSTR(" "));
+  strcat_P(aprsPkt, pstrSP);
   if (comment != NULL) strcat(aprsPkt, comment);
-  else strcat_P(aprsPkt, NODENAME);
+  else strcat(aprsPkt, NODENAME);
   if (PROBE) strcat_P(aprsPkt, PSTR(" [PROBE]"));
   strcat_P(aprsPkt, eol);
   aprsSend(aprsPkt);
-}
-
-/**
-  Store previous athmospheric pressures for each report in the last zbHours hours
-  @param y current value
-*/
-void rgStore(float y) {
-  rgY[rgIdx] = y;
-  rgIdx++;
-  if (rgIdx >= rgMax) rgIdx = 0; // wrap around
-  if (rgCnt < rgMax) rgCnt++;    // count the stored values
-}
-
-/**
-  Linear regression
-*/
-void rgLnRegr() {
-  int i, iy = 0;
-  float denom, dy, x, y;
-  float a1, a2, s, s1, s2, s3, s4;
-  // Circular buffer, moving cursor
-  if (rgCnt >= rgMax) iy = rgIdx;
-  // Compute the sums
-  s1 = s2 = s3 = s4 = s = 0;
-  for (i = 0; i < rgCnt; i++) {
-    int j = i + iy;
-    if (j >= rgMax) j -= rgMax;
-    x = i;
-    y = rgY[j];
-    s1 += x;
-    s2 += x * x;
-    s3 += y;
-    s4 += x * y;
-  }
-  // Find alpha, beta and std deviation
-  if ((denom = rgCnt * s2 - s1 * s1)) {
-    a1 = (s3 * s2 - s1 * s4) / denom;
-    a2 = (rgCnt * s4 - s3 * s1) / denom;
-    for (i = 0; i < rgCnt; i++) {
-      int j = i + iy;
-      if (j >= rgMax) j -= rgMax;
-      dy = rgY[j] - (a2 * i + a1);
-      s += dy * dy;
-    }
-    rgAB[0] = a2;
-    rgAB[1] = a1;
-    rgAB[2] = sqrt(s / (rgCnt - 1));
-  }
 }
 
 /**
@@ -864,7 +804,7 @@ int zbForecast(float zbCurrent) {
   rgStore(zbCurrent);
   // If first run, set the timeout to the next hour
   unsigned long utm = timeUNIX(false);
-  int mm = (utm % 3600) / 60;
+  unsigned long  mm = (utm % 3600) / 60;
   if (zbNextTime == 0) zbNextTime = millis() + (60UL - mm) * 60000UL;
   else {
     if (millis() >= zbNextTime) {
@@ -874,9 +814,13 @@ int zbForecast(float zbCurrent) {
       float range = zbBaroTop - zbBaroBot;
       // Compute the linear regression
       rgLnRegr();
-      Serial.println(rgAB[0]);
-      Serial.println(rgAB[1]);
-      Serial.println(rgAB[2]);
+      Serial.print(F("Linear regression: "));
+      Serial.print(rgAB[0]);
+      Serial.print(" ");
+      Serial.print(rgAB[1]);
+      Serial.print(" ");
+      Serial.print(rgAB[2]);
+      Serial.println();
       // Compute the pressure variation and last pressure (according to equation)
       float pVar = rgAB[0] * rgCnt;
       float pLst = pVar + rgAB[1];
@@ -900,21 +844,59 @@ int zbForecast(float zbCurrent) {
         else                result = zbSt[index];
       }
       // Set the next timer
-      zbNextTime += zbDelay * 1000;
+      zbNextTime += zbDelay;
     }
   }
   return result;
 }
 
+
 /**
-  Print a character array from program memory
+  Store previous athmospheric pressure values for each report in the last zbHours hours
+  @param y current value
 */
-void print_P(const char *str) {
-  uint8_t val;
-  do {
-    val = pgm_read_byte(str++);
-    if (val) Serial.write(val);
-  } while (val);
+void rgStore(float y) {
+  rgY[rgIdx] = y;
+  rgIdx++;
+  if (rgIdx >= rgMax) rgIdx = 0; // wrap around
+  if (rgCnt < rgMax)  rgCnt++;   // count the stored values
+}
+
+/**
+  Linear regression
+*/
+void rgLnRegr() {
+  int i, iy = 0;
+  float denom, dy, x, y;
+  float a1 = 0, a2 = 0, s = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0;
+  // Circular buffer, moving cursor
+  if (rgCnt >= rgMax) iy = rgIdx;
+  // Compute the sums
+  for (i = 0; i < rgCnt; i++) {
+    int j = i + iy;
+    if (j >= rgMax) j -= rgMax;
+    x = i;
+    y = rgY[j];
+    s1 += x;
+    s2 += x * x;
+    s3 += y;
+    s4 += x * y;
+  }
+  // Find alpha, beta and std deviation
+  if ((denom = rgCnt * s2 - s1 * s1)) {
+    a1 = (s3 * s2 - s1 * s4) / denom;
+    a2 = (rgCnt * s4 - s3 * s1) / denom;
+    for (i = 0; i < rgCnt; i++) {
+      int j = i + iy;
+      if (j >= rgMax) j -= rgMax;
+      dy = rgY[j] - (a2 * i + a1);
+      s += dy * dy;
+    }
+    // Store the coefficients
+    rgAB[0] = a2;
+    rgAB[1] = a1;
+    rgAB[2] = sqrt(s / (rgCnt - 1));
+  }
 }
 
 /**
@@ -924,10 +906,10 @@ void setup() {
   // Init the serial com
   Serial.begin(115200);
   Serial.println();
-  print_P(NODENAME);
-  Serial.print(F(" "));
-  print_P(VERSION);
-  Serial.print(F(" "));
+  Serial.print(NODENAME);
+  Serial.print(" ");
+  Serial.print(VERSION);
+  Serial.print(" ");
   Serial.println(__DATE__);
 
   // Try to connect to WiFi
@@ -1094,76 +1076,20 @@ void loop() {
     // Text buffer
     char text[16] = "";
 
-    // Read the light sensor TSL2561
-    // TODO Adapt the shutter
-    unsigned int luxVis = 0, luxIrd = 0;
-    double lux = -1;
-    if (!lightOK) {
-      // Check again whether the sensor is present
-      light.begin();
-      unsigned char ID;
-      if (light.getID(ID)) {
-        light.setTiming(lightGain, lightSHTR, lightMS);
-        light.setPowerUp();
-        lightOK = true;
-      }
-    }
-    if (lightOK) {
-      // Set the bit 5 to show the sensor is present (reverse)
-      aprsTlmBits |= B00100000;
-      if (light.getData(luxVis, luxIrd)) {
-        int solRad = -1;
-        boolean good = light.getLux(lightGain, lightMS, luxVis, luxIrd, lux);
-        if (good) {
-          // Compose and publish the telemetry
-          snprintf_P(text, sizeof(text), PSTR("%d"), lux);
-          mqttPub(text, mqttTopicSns, "illuminance");
-          snprintf_P(text, sizeof(text), PSTR("%d"), luxVis);
-          mqttPub(text, mqttTopicSns, "visible");
-          snprintf_P(text, sizeof(text), PSTR("%d"), luxIrd);
-          mqttPub(text, mqttTopicSns, "infrared");
-          // Calculate the solar radiation in W/m^2
-          solRad = (int)(lux * 0.0079);
-          // If the sensor is saturated, limit the reading to maximum value
-          if (solRad > 999) solRad = 999;
-        }
-        else {
-          // Saturated
-          lux = -1;
-          // If the sensor is saturated, limit the reading to maximum value
-          if (solRad > 999) solRad = 999;
-          // Set the bit 4 to show the sensor is saturated
-          aprsTlmBits |= B00010000;
-        }
-        // Add to round median filter
-        rMedIn(MD_SRAD, solRad);
-        rMedIn(MD_VISI, luxVis);
-        rMedIn(MD_IRED, luxIrd);
-      }
-      else {
-        // Store invalid values if no sensor
-        rMedIn(MD_SRAD, -1);
-        rMedIn(MD_VISI, 0);
-        rMedIn(MD_IRED, 0);
-      }
-    }
-    yield();
-
-    // Read the athmospheric sensor BME280
-    float temp, pres, slvl, hmdt, dewp;
     // Check again whether the sensor is present
     if (!atmoOK) atmoOK = atmo.begin() == 0x60;
+    // Read the athmospheric sensor BME280
     if (atmoOK) {
       // Set the bit 5 to show the sensor is present (reverse)
       aprsTlmBits |= B01000000;
       // Get the weather parameters
-      temp = atmo.readTempC();
-      pres = atmo.readFloatPressure();
-      slvl = pres * altCorr;
-      hmdt = atmo.readFloatHumidity();
-      dewp = 243.04 *
-             (log(hmdt / 100.0) + ((17.625 * temp) / (243.04 + temp))) /
-             (17.625 - log(hmdt / 100.0) - ((17.625 * temp) / (243.04 + temp)));
+      float temp = atmo.readTempC();
+      float pres = atmo.readFloatPressure();
+      float slvl = pres * altCorr;
+      float hmdt = atmo.readFloatHumidity();
+      float dewp = 243.04 *
+                   (log(hmdt / 100.0) + ((17.625 * temp) / (243.04 + temp))) /
+                   (17.625 - log(hmdt / 100.0) - ((17.625 * temp) / (243.04 + temp)));
       // Add to the round median filter
       rMedIn(MD_TEMP, (int)(temp * 9 / 5 + 32));      // Store directly integer Fahrenheit
       rMedIn(MD_PRES, (int)(slvl / 10));              // Store directly sea level in dPa
@@ -1183,34 +1109,90 @@ void loop() {
     }
     yield();
 
+    // Check again whether the sensor is present
+    if (!lightOK) {
+      light.begin();
+      unsigned char ID;
+      if (light.getID(ID)) {
+        light.setTiming(lightGain, lightSHTR, lightMS);
+        light.setPowerUp();
+        lightOK = true;
+      }
+    }
+    // Read the light sensor TSL2561
+    if (lightOK) {
+      // Set the bit 5 to show the sensor is present (reverse)
+      aprsTlmBits |= B00100000;
+      unsigned int luxVis = 0, luxIrd = 0;
+      double lux = -1;
+      int solRad = -1;
+      if (light.getData(luxVis, luxIrd)) {
+        // TODO Adapt the shutter if saturated
+        if (light.getLux(lightGain, lightMS, luxVis, luxIrd, lux)) {
+          // Compose and publish the telemetry
+          mqttPub((int)lux,    mqttTopicSns, "illuminance");
+          mqttPub((int)luxVis, mqttTopicSns, "visible");
+          mqttPub((int)luxIrd, mqttTopicSns, "infrared");
+          // Calculate the solar radiation in W/m^2
+          solRad = (int)(lux * 0.0079);
+          // If the sensor is saturated, limit the reading to maximum value
+          if (solRad > 999) solRad = 999;
+        }
+        else {
+          // Saturated
+          lux = -1;
+          // If the sensor is saturated, limit the reading to maximum value
+          if (solRad > 999) solRad = 999;
+          // Set the bit 4 to show the sensor is saturated
+          aprsTlmBits |= B00010000;
+        }
+        // Add to round median filter
+        rMedIn(MD_SRAD, solRad);
+        rMedIn(MD_VISI, luxVis);
+        rMedIn(MD_IRED, luxIrd);
+      }
+      else {
+        // Store invalid values if erroneous data
+        rMedIn(MD_SRAD, -1);
+        rMedIn(MD_VISI, 0);
+        rMedIn(MD_IRED, 0);
+      }
+    }
+    else {
+      // Store invalid values if no sensor
+      rMedIn(MD_SRAD, -1);
+      rMedIn(MD_VISI, 0);
+      rMedIn(MD_IRED, 0);
+    }
+    yield();
+
     // Free Heap
     int heap = ESP.getFreeHeap();
     rMedIn(MD_HEAP, heap);
     // Read the Vcc (mV) and add to the round median filter
     int vcc  = ESP.getVcc();
     rMedIn(MD_VCC, vcc);
-    // Set the bit 3 to show the battery is wrong (3.3V +/- 10%)
+    // Set the bit 3 to show whether the battery is wrong (3.3V +/- 10%)
     if (vcc < 3000 or vcc > 3600) aprsTlmBits |= B00001000;
     // Get RSSI
     int rssi = WiFi.RSSI();
-    if (rssi) rMedIn(MD_RSSI, -rssi);
+    rMedIn(MD_RSSI, rssi);
 
-    // Create the topic
-    char topic[32];
+    // Create the reporting topic
+    char topic[32] = "";
     strncpy(topic, mqttTopicRpt, sizeof(topic));
-    strncat(topic, "/", 2);
-    strncat(topic, nodename, sizeof(topic) - strlen(topic) - 1);
+    strcat_P(topic, pstrSL);
+    strcat(topic, nodename);
     // Uptime
     char upt[32] = "";
     unsigned long ups = 0;
     ups = uptime(upt, sizeof(upt));
-    snprintf_P(text, sizeof(text), PSTR("%d"), ups);
-    mqttPubRet(text, topic, "uptime");
+    mqttPubRet(ups, topic, "uptime");
     mqttPubRet(upt, topic, "uptime", "text");
     // Free heap
     mqttPubRet(heap, topic, "heap");
     // Power supply
-    snprintf_P(text, sizeof(text), PSTR("%d.%d"), vcc / 1000, vcc % 1000);
+    snprintf_P(text, sizeof(text), pstrDD, vcc / 1000, vcc % 1000);
     mqttPubRet(text, topic, "vcc");
     // Add the WiFi topic and publish the RSSI value
     mqttPubRet(rssi, topic, "wifi", "rssi");
@@ -1225,11 +1207,15 @@ void loop() {
         // Send the position, altitude and comment in firsts minutes after boot
         if (millis() < snsDelayBfr) aprsSendPosition();
         // Send weather data
-        aprsSendWeather(rMedOut(MD_TEMP), rMedOut(MD_HMDT), rMedOut(MD_PRES), rMedOut(MD_SRAD));
+        aprsSendWeather(rMedOut(MD_TEMP),
+                        rMedOut(MD_HMDT),
+                        rMedOut(MD_PRES),
+                        rMedOut(MD_SRAD));
         // Send the telemetry
-        aprsSendTelemetry(rMedOut(MD_VCC) >> 4 - 625,
-                          rMedOut(MD_RSSI),
-                          rMedOut(MD_HEAP) / 200,
+        //aprsSendTelemetrySetup();
+        aprsSendTelemetry(rMedOut(MD_VCC) >> 2 - 625,
+                          -rMedOut(MD_RSSI),
+                          rMedOut(MD_HEAP) >> 8,
                           rMedOut(MD_VISI) >> 8,
                           rMedOut(MD_IRED) >> 8,
                           aprsTlmBits);
