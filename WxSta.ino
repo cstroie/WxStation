@@ -26,7 +26,7 @@
 
 // The DEBUG and DEVEL flag
 #define DEBUG
-#define DEVEL
+//#define DEVEL
 
 // The sensors are connected to I2C
 #define SDA 0
@@ -76,7 +76,7 @@ PubSubClient mqttClient(wifiClient);                           // MQTT client, b
 #ifdef DEVEL
 const char          mqttId[]       = "wxsta-dev-eridu-eu-org";  // Development MQTT client ID
 #else
-const char          mqttId[]       = "wxmon-eridu-eu-org";      // Production MQTT client ID
+const char          mqttId[]       = "wxsta-eridu-eu-org";      // Production MQTT client ID
 #endif
 const char          mqttServer[]   = "eridu.eu.org";            // MQTT server address to connect to
 const int           mqttPort       = 1883;                      // MQTT port
@@ -560,7 +560,7 @@ void wifiCallback(WiFiManager *wifiMgr) {
   @param *pkt the packet to send
 */
 void aprsSend(const char *pkt) {
-  //aprsClient.print(pkt);
+  aprsClient.print(pkt);
   yield();
   //aprsClient.write((uint8_t *)pkt, strlen(pkt));
 #ifdef DEBUG
