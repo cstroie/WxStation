@@ -1,5 +1,5 @@
 /**
-  WxSta - Weather Station
+  WxSta - Weather probe based on ESP8266, WiFi connected
 
   Copyright 2017 Costin STROIE <costinstroie@eridu.eu.org>
 
@@ -19,8 +19,8 @@
   WxSta.  If not, see <http://www.gnu.org/licenses/>.
 
 
-  WiFi connected weather station, reading the athmospheric sensor BME280 and
-  the illuminance sensor TSL2561 and publishing the measured data along with
+  WiFi connected weather probe, reading the athmospheric sensor BME280 and
+  the illuminance sensor TSL2561, publishing the measured data along with
   various local telemetry.
 */
 
@@ -42,14 +42,8 @@
 #include <ESP8266mDNS.h>
 #include <ArduinoOTA.h>
 
-// Timer
-#include <AsyncDelay.h>
-
 // MQTT
 #include <PubSubClient.h>
-
-// Statistics
-#include <RunningMedian.h>
 
 // Device name
 #ifdef DEVEL
@@ -79,7 +73,6 @@ const int     ntpTZ                 = 0;                      // Time zone
 // MQTT parameters
 WiFiClient wifiClient;                                         // WiFi TCP client for MQTT
 PubSubClient mqttClient(wifiClient);                           // MQTT client, based on WiFi client
-AsyncDelay delayMQTT;
 #ifdef DEVEL
 const char          mqttId[]       = "wxsta-dev-eridu-eu-org";  // Development MQTT client ID
 #else
@@ -114,7 +107,7 @@ const char eol[]          PROGMEM = "\r\n";
 
 // Reports and measurements
 const int aprsRprtHour   = 10; // Number of APRS reports per hour
-const int aprsMsrmMax    = 3;  // Number of measurements per report (keep even)
+const int aprsMsrmMax    = 5;  // Number of measurements per report (keep even)
 int       aprsMsrmCount  = 0;  // Measurements counter
 int       aprsTlmSeq     = 0;  // Telemetry sequence mumber
 
@@ -129,9 +122,7 @@ enum      rMedIdx {MD_TEMP, MD_HMDT, MD_PRES, MD_SRAD, MD_VISI, MD_IRED, MD_RSSI
 int       rMed[MD_ALL][4] = {0, -1, -1, -1};
 
 // Sensors
-const unsigned long snsReadTime = 30UL * 1000UL;                          // Total time to read sensors, repeatedly, for aprsMsrmMax times
-const unsigned long snsDelayBfr = 3600000UL / aprsRprtHour - snsReadTime; // Delay before sensor readings
-const unsigned long snsDelayBtw = snsReadTime / aprsMsrmMax;              // Delay between sensor readings
+const unsigned long snsDelay    = 3600000UL / aprsRprtHour / aprsMsrmMax; // Delay between sensor readings
 unsigned long       snsNextTime = 0UL;                                    // Next time to read the sensors
 // BME280
 const byte          atmoAddr    = 0x77;                                   // The athmospheric sensor I2C address
@@ -207,6 +198,7 @@ const char pstrDD[] PROGMEM = "%d.%d";
 const char pstrSP[] PROGMEM = " ";
 const char pstrCL[] PROGMEM = ":";
 const char pstrSL[] PROGMEM = "/";
+
 
 #undef max
 #define max(a,b) ((a)>(b)?(a):(b))
@@ -1028,34 +1020,26 @@ void setup() {
   Main Arduino loop
 */
 void loop() {
-  // OTA
+  // Handle OTA
   ArduinoOTA.handle();
   yield();
 
   // Process incoming MQTT messages and maintain connection
   if (!mqttClient.loop())
-    // Not connected, check if it's time to reconnect
+    // Not connected, check if it's time to try to reconnect
     if (millis() >= mqttNextTime)
       // Try to reconnect every mqttDelay seconds
       if (!mqttReconnect()) mqttNextTime = millis() + mqttDelay;
   yield();
 
-
-  // TODO
   // Read the sensors and publish telemetry
   if (millis() >= snsNextTime) {
-
     // Count to check if we need to send the APRS data
-    if (++aprsMsrmCount >= aprsMsrmMax) {
+    if (++aprsMsrmCount >= aprsMsrmMax)
       // Restart the counter
       aprsMsrmCount = 0;
-      // Repeat sensor reading after the 'before' delay (long)
-      snsNextTime += snsDelayBfr;
-    }
-    else {
-      // Repeat sensor reading after the 'between' delay (short)
-      snsNextTime += snsDelayBtw;
-    }
+    // Repeat sensor reading after the delay
+    snsNextTime += snsDelay;
     // Set the telemetry bit 7 if the station is being probed
     if (PROBE) aprsTlmBits = B10000000;
     else       aprsTlmBits = B00000000;
@@ -1065,22 +1049,17 @@ void loop() {
     Serial.println(aprsMsrmCount);
 #endif
 
-
-
-    /*
-      // Count to check if we need to send the APRS data
-      if (++aprsMsrmCount > aprsMsrmMax) aprsMsrmCount = 1;
-      // Set the telemetry bit 7 if the station is being probed
-      if (PROBE) aprsTlmBits = B10000000;
-    */
-    // Text buffer
-    char text[16] = "";
+    // Check the time and set the telemetry bit 0 if time is not accurate
+    unsigned long utm = timeUNIX();
+    if (!ntpOk) aprsTlmBits |= B00000001;
+    // Set the telemetry bit 1 if the uptime is less than one day (recent reboot)
+    if (millis() < 86400000UL) aprsTlmBits |= B00000010;
 
     // Check again whether the sensor is present
     if (!atmoOK) atmoOK = atmo.begin() == 0x60;
     // Read the athmospheric sensor BME280
     if (atmoOK) {
-      // Set the bit 5 to show the sensor is present (reverse)
+      // Set the bit 6 to show the sensor is present (reverse)
       aprsTlmBits |= B01000000;
       // Get the weather parameters
       float temp = atmo.readTempC();
@@ -1180,15 +1159,15 @@ void loop() {
 
     // Create the reporting topic
     char topic[32] = "";
+    char text[32] = "";
     strncpy(topic, mqttTopicRpt, sizeof(topic));
     strcat_P(topic, pstrSL);
     strcat(topic, nodename);
     // Uptime
-    char upt[32] = "";
     unsigned long ups = 0;
-    ups = uptime(upt, sizeof(upt));
+    ups = uptime(text, sizeof(text));
     mqttPubRet(ups, topic, "uptime");
-    mqttPubRet(upt, topic, "uptime", "text");
+    mqttPubRet(text, topic, "uptime", "text");
     // Free heap
     mqttPubRet(heap, topic, "heap");
     // Power supply
@@ -1204,8 +1183,8 @@ void loop() {
       if (aprsClient.connect(aprsServer, aprsPort)) {
         // Authentication
         aprsAuthenticate();
-        // Send the position, altitude and comment in firsts minutes after boot
-        if (millis() < snsDelayBfr) aprsSendPosition();
+        // Send the position, altitude and comment in firsts 10 minutes after boot
+        if (millis() < 600000UL) aprsSendPosition();
         // Send weather data
         aprsSendWeather(rMedOut(MD_TEMP),
                         rMedOut(MD_HMDT),
@@ -1224,8 +1203,5 @@ void loop() {
         aprsClient.stop();
       };
     }
-
-    // Repeat after the delay
-    //snsNextTime += snsDelay;
   }
 }
