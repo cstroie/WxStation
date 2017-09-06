@@ -26,7 +26,7 @@
 
 // The DEBUG and DEVEL flag
 #define DEBUG
-#define DEVEL
+//#define DEVEL
 
 // The sensors are connected to I2C
 #define SDA 0
@@ -141,8 +141,8 @@ ADC_MODE(ADC_VCC);
 
 // Zambretti forecaster (pressure in tenths of mB = decapascals dPa)
 int           zbBaroTop   = 10500;                  // Highest athmospheric pressure
-int           zbBaroBot   = 9500;                   // Lowest athmospheric pressure
-int           zbBaroTrs   = 10;                     // Pressure threshold
+int           zbBaroBot   =  9500;                  // Lowest athmospheric pressure
+int           zbBaroTrs   =    10;                  // Pressure threshold
 const int     zbHours     = 3;                      // Need the last 3 hours for forecast
 int           zbDelay     = 3600000UL;              // Report hourly
 unsigned long zbNextTime  = 0;                      // The next time to report, collect data till then
@@ -527,6 +527,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 #endif
 
   // Decompose the topic
+  // TODO strtok
   char *pRoot = NULL, *pTrunk = NULL, *pBranch = NULL;
   pRoot = topic;
   pTrunk = strchr(pRoot, '/');
@@ -602,6 +603,55 @@ void aprsAuthenticate() {
   aprsSend(aprsPkt);
 }
 
+
+/**
+  Send APRS status
+  FW0690>APRS,TCPIP*:>Fine weather
+
+  @param message the status message to send
+*/
+void aprsSendStatus(const char *message) {
+  // Send only if the message is not empty
+  if (message[0] != '\0') {
+    // Send the APRS packet
+    strcpy_P(aprsPkt, aprsCallSign);
+    strcat_P(aprsPkt, aprsPath);
+    strcat_P(aprsPkt, PSTR(">"));
+    strcat(aprsPkt, message);
+    strcat_P(aprsPkt, eol);
+    aprsSend(aprsPkt);
+  }
+}
+
+/**
+  Send APRS position and altitude
+  FW0690>APRS,TCPIP*:!DDMM.hhN/DDDMM.hhW$comments
+
+  @param comment the comment to append
+*/
+void aprsSendPosition(const char *comment = NULL) {
+  // Compose the APRS packet
+  strcpy_P(aprsPkt, aprsCallSign);
+  strcat_P(aprsPkt, aprsPath);
+  strcat_P(aprsPkt, PSTR("!"));
+  strcat_P(aprsPkt, aprsLocation);
+  strcat_P(aprsPkt, PSTR("/A="));
+  char buf[7];
+  sprintf_P(buf, PSTR("%06d"), altFeet);
+  strncat(aprsPkt, buf, sizeof(buf));
+  strcat_P(aprsPkt, pstrSP);
+  if (comment != NULL)
+    strcat(aprsPkt, comment);
+  else {
+    strcat(aprsPkt, NODENAME);
+    strcat_P(aprsPkt, pstrSL);
+    strcat(aprsPkt, VERSION);
+    if (PROBE) strcat_P(aprsPkt, PSTR(" [PROBE]"));
+  }
+  strcat_P(aprsPkt, eol);
+  aprsSend(aprsPkt);
+}
+
 /**
   Send APRS weather data, then try to get the forecast
   FW0690>APRS,TCPIP*:@152457h4427.67N/02608.03E_.../...g...t044h86b10201L001WxSta
@@ -612,17 +662,22 @@ void aprsAuthenticate() {
   @param srad solar radiation in W/m^2
 */
 void aprsSendWeather(int temp, int hmdt, int pres, int srad) {
+  const int bufSize = 16;
+  char buf[bufSize] = "";
   // Forecast as status report
   int zbCode = zbForecast(pres);
+  // TODO
+  //aprsSendPosition(("Z " + String(zbCode)).c_str());
   if (zbCode >= 0) {
     const int bufSize = 40;
     char buf[bufSize] = "";
-    strncpy_P(buf, (char*)pgm_read_word(&(zbFc[zbCode])), bufSize);
+    strncpy_P(buf, zbFc[zbCode], bufSize);
+    // TODO
+    //strncpy_P(buf, (char*)pgm_read_dword(&(zbFc[zbCode])), bufSize);
     aprsSendStatus(buf);
   }
+
   // Weather report
-  const int bufSize = 8;
-  char buf[bufSize] = "";
   strcpy_P(aprsPkt, aprsCallSign);
   strcat_P(aprsPkt, aprsPath);
   strcat_P(aprsPkt, PSTR("@"));
@@ -742,54 +797,6 @@ void aprsSendTelemetrySetup() {
 }
 
 /**
-  Send APRS status
-  FW0690>APRS,TCPIP*:>Fine weather
-
-  @param message the status message to send
-*/
-void aprsSendStatus(const char *message) {
-  // Send only if the message is not empty
-  if (message[0] != '\0') {
-    // Send the APRS packet
-    strcpy_P(aprsPkt, aprsCallSign);
-    strcat_P(aprsPkt, aprsPath);
-    strcat_P(aprsPkt, PSTR(">"));
-    strcat(aprsPkt, message);
-    strcat_P(aprsPkt, eol);
-    aprsSend(aprsPkt);
-  }
-}
-
-/**
-  Send APRS position and altitude
-  FW0690>APRS,TCPIP*:!DDMM.hhN/DDDMM.hhW$comments
-
-  @param comment the comment to append
-*/
-void aprsSendPosition(const char *comment = NULL) {
-  // Compose the APRS packet
-  strcpy_P(aprsPkt, aprsCallSign);
-  strcat_P(aprsPkt, aprsPath);
-  strcat_P(aprsPkt, PSTR("!"));
-  strcat_P(aprsPkt, aprsLocation);
-  strcat_P(aprsPkt, PSTR("/A="));
-  char buf[7];
-  sprintf_P(buf, PSTR("%06d"), altFeet);
-  strncat(aprsPkt, buf, sizeof(buf));
-  strcat_P(aprsPkt, pstrSP);
-  if (comment != NULL)
-    strcat(aprsPkt, comment);
-  else {
-    strcat(aprsPkt, NODENAME);
-    strcat_P(aprsPkt, pstrSL);
-    strcat(aprsPkt, VERSION);
-    if (PROBE) strcat_P(aprsPkt, PSTR(" [PROBE]"));
-  }
-  strcat_P(aprsPkt, eol);
-  aprsSend(aprsPkt);
-}
-
-/**
   Get the Zambretti forecast
   @param zbCurrent current value of the atmospheric pressure in dPa (0.1 mB)
   @return the Zambretti forecast
@@ -799,57 +806,53 @@ int zbForecast(int zbCurrent) {
   int result = -1;
   // Keep the current value in the circular buffer for linear regression
   rgStore(zbCurrent);
+  // TODO
+  //aprsSendPosition(("C=" + String(rgCnt)).c_str());
+
   // If first run, set the timeout to the next hour
   unsigned long utm = timeUNIX(false);
   unsigned long  mm = (utm % 3600) / 60;
-  if (zbNextTime == 0) zbNextTime = millis() + (60UL - mm) * 60000UL;
-  else {
-    if (millis() >= zbNextTime) {
-      // Timer expired
-      int trend = 0;
-      int index = 0;
-      int range = zbBaroTop - zbBaroBot;
-      // Compute the linear regression
-      float A, B, S;
-      rgLnRegr(&A, &B, &S);
-#ifdef DEBUG
-      Serial.print(F("Linear regression: "));
-      Serial.print(A);
-      Serial.print(" ");
-      Serial.print(B);
-      Serial.print(" ");
-      Serial.print(S);
-      Serial.println();
-#endif
-      // Compute the pressure variation and last pressure (according to the equation)
-      int pVar = round(A * rgCnt);
-      int pLst = round(pVar + B);
-      // Get the trend
-      if      (pVar >  zbBaroTrs) trend =  1;
-      else if (pVar < -zbBaroTrs) trend = -1;
-      // Corrections for summer
-      // FIXME
-      //int mon = month();
-      //if ((mon >= 4) and (mon <= 9)) {
-      //  if      (trend > 0) pLst += range * 0.07;
-      //  else if (trend < 0) pLst -= range * 0.07;
-      //}
-      // Validate the interval
-      if (pLst > zbBaroTop) pLst = zbBaroTop - zbBaroTrs - zbBaroTrs;
-      // Get the forecast
-      index = round(22 * (pLst - zbBaroBot) / range);
-      if ((index >= 0) and (index <= 22)) {
-        if      (trend > 0) result = zbRs[index];
-        else if (trend < 0) result = zbFl[index];
-        else                result = zbSt[index];
-      }
-      // Set the next timer
-      zbNextTime += zbDelay;
+  if (zbNextTime == 0)
+    zbNextTime = millis() + (60UL - mm) * 60000UL;
+  else if (millis() >= zbNextTime) {
+    // Timer expired
+    int trend = 0;
+    int index = 0;
+    int range = zbBaroTop - zbBaroBot;
+    // Compute the linear regression
+    float rgA, rgB, rgS;
+    rgLnRegr(&rgA, &rgB, &rgS);
+    // TODO
+    //aprsSendPosition(("A=" + String(rgA, 3) + ", B=" + String(rgB, 3) + ", S=" + String(rgS, 3)).c_str());
+    // Compute the pressure variation and last pressure (according to the equation)
+    int pVar = round(rgA * rgCnt);
+    int pLst = round(pVar + rgB);
+    // TODO
+    //aprsSendPosition(("V=" + String(pVar) + ", L=" + String(pLst)).c_str());
+    // Get the trend
+    if      (pVar >  zbBaroTrs) trend =  1;
+    else if (pVar < -zbBaroTrs) trend = -1;
+    // Corrections for summer
+    // FIXME
+    //int mon = month();
+    //if ((mon >= 4) and (mon <= 9)) {
+    //  if      (trend > 0) pLst += range * 0.07;
+    //  else if (trend < 0) pLst -= range * 0.07;
+    //}
+    // Validate the interval
+    if (pLst > zbBaroTop) pLst = zbBaroTop - zbBaroTrs - zbBaroTrs;
+    // Get the forecast
+    index = round(22 * (pLst - zbBaroBot) / range);
+    if ((index >= 0) and (index <= 22)) {
+      if      (trend > 0) result = zbRs[index];
+      else if (trend < 0) result = zbFl[index];
+      else                result = zbSt[index];
     }
+    // Set the next timer
+    zbNextTime += zbDelay;
   }
   return result;
 }
-
 
 /**
   Store previous athmospheric pressure values for each report in the last zbHours hours
@@ -881,7 +884,7 @@ void rgLnRegr(float *A, float *B, float *S) {
     int j = i + iy;
     if (j >= rgMax) j -= rgMax;
     x = i;
-    y = (float)rgY[j];
+    y = rgY[j];
     s1 += x;
     s2 += x * x;
     s3 += y;
@@ -894,7 +897,7 @@ void rgLnRegr(float *A, float *B, float *S) {
     for (i = 0; i < rgCnt; i++) {
       int j = i + iy;
       if (j >= rgMax) j -= rgMax;
-      dy = (float)rgY[j] - (a2 * i + a1);
+      dy = rgY[j] - (a2 * i + a1);
       s += dy * dy;
     }
     // Return the coefficients
