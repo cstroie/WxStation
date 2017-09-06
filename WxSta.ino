@@ -26,7 +26,7 @@
 
 // The DEBUG and DEVEL flag
 #define DEBUG
-//#define DEVEL
+#define DEVEL
 
 // The sensors are connected to I2C
 #define SDA 0
@@ -139,10 +139,10 @@ unsigned int        lightMS;                                              //    
 // Set ADC to Voltage
 ADC_MODE(ADC_VCC);
 
-// Zambretti forecaster
-int           zbBaroTop   = 105000;                 // Highest athmospheric pressure
-int           zbBaroBot   = 95000;                  // Lowest athmospheric pressure
-int           zbBaroTrs   = 100;                    // Pressure threshold
+// Zambretti forecaster (pressure in tenths of mB = decapascals dPa)
+int           zbBaroTop   = 10500;                  // Highest athmospheric pressure
+int           zbBaroBot   = 9500;                   // Lowest athmospheric pressure
+int           zbBaroTrs   = 10;                     // Pressure threshold
 const int     zbHours     = 3;                      // Need the last 3 hours for forecast
 int           zbDelay     = 3600000UL;              // Report hourly
 unsigned long zbNextTime  = 0;                      // The next time to report, collect data till then
@@ -151,8 +151,7 @@ unsigned long zbNextTime  = 0;                      // The next time to report, 
 const int     rgMax       = zbHours * aprsRprtHour; // The size of the circular buffer
 int           rgIdx       = 0;                      // Index in circular buffer
 int           rgCnt       = 0;                      // Counter of current values in buffer
-float         rgY[rgMax]  = {0};                    // The circular buffer
-float         rgAB[]      = {0, 0, 0};              // Coefficients: a, b and std dev in f(x)=ax+b
+int           rgY[rgMax]  = {0};                    // The circular buffer
 
 // Forecast texts
 const char zbFcA[] PROGMEM = "Settled fine";
@@ -606,14 +605,14 @@ void aprsAuthenticate() {
   Send APRS weather data, then try to get the forecast
   FW0690>APRS,TCPIP*:@152457h4427.67N/02608.03E_.../...g...t044h86b10201L001WxSta
 
-  @param temp temperature
-  @param hmdt relative humidity
-  @param pres athmospheric pressure (QNH)
-  @param srad solar radiation
+  @param temp temperature in Fahrenheit
+  @param hmdt relative humidity in percents
+  @param pres athmospheric pressure (QNH) in dPa
+  @param srad solar radiation in W/m^2
 */
 void aprsSendWeather(int temp, int hmdt, int pres, int srad) {
   // Forecast as status report
-  int zbCode = zbForecast((float)pres);
+  int zbCode = zbForecast(pres);
   if (zbCode >= 0) {
     const int bufSize = 40;
     char buf[bufSize] = "";
@@ -654,7 +653,7 @@ void aprsSendWeather(int temp, int hmdt, int pres, int srad) {
     snprintf_P(buf, bufSize, PSTR("b%05d"), pres);
     strncat(aprsPkt, buf, bufSize);
   }
-  // Illuminance, if valid
+  // Solar radiation, if valid
   if (srad >= 0 and srad <= 999) {
     snprintf_P(buf, bufSize, PSTR("L%03d"), srad);
     strncat(aprsPkt, buf, bufSize);
@@ -786,10 +785,10 @@ void aprsSendPosition(const char *comment = NULL) {
 
 /**
   Get the Zambretti forecast
-  @param zbCurrent current value of the atmospheric pressure
+  @param zbCurrent current value of the atmospheric pressure in dPa (0.1 mB)
   @return the Zambretti forecast
 */
-int zbForecast(float zbCurrent) {
+int zbForecast(int zbCurrent) {
   // Prepare the result
   int result = -1;
   // Keep the current value in the circular buffer for linear regression
@@ -803,19 +802,22 @@ int zbForecast(float zbCurrent) {
       // Timer expired
       int trend = 0;
       int index = 0;
-      float range = zbBaroTop - zbBaroBot;
+      int range = zbBaroTop - zbBaroBot;
       // Compute the linear regression
-      rgLnRegr();
+      float A, B, S;
+      rgLnRegr(&A, &B, &S);
+#ifdef DEBUG
       Serial.print(F("Linear regression: "));
-      Serial.print(rgAB[0]);
+      Serial.print(A);
       Serial.print(" ");
-      Serial.print(rgAB[1]);
+      Serial.print(B);
       Serial.print(" ");
-      Serial.print(rgAB[2]);
+      Serial.print(S);
       Serial.println();
-      // Compute the pressure variation and last pressure (according to equation)
-      float pVar = rgAB[0] * rgCnt;
-      float pLst = pVar + rgAB[1];
+#endif
+      // Compute the pressure variation and last pressure (according to the equation)
+      int pVar = round(A * rgCnt);
+      int pLst = round(pVar + B);
       // Get the trend
       if      (pVar >  zbBaroTrs) trend =  1;
       else if (pVar < -zbBaroTrs) trend = -1;
@@ -827,9 +829,9 @@ int zbForecast(float zbCurrent) {
       //  else if (trend < 0) pLst -= range * 0.07;
       //}
       // Validate the interval
-      if (pLst > zbBaroTop) pLst = zbBaroTop - 2 * zbBaroTrs;
+      if (pLst > zbBaroTop) pLst = zbBaroTop - zbBaroTrs - zbBaroTrs;
       // Get the forecast
-      index = (int)(22 * (pLst - zbBaroBot) / range);
+      index = round(22 * (pLst - zbBaroBot) / range);
       if ((index >= 0) and (index <= 22)) {
         if      (trend > 0) result = zbRs[index];
         else if (trend < 0) result = zbFl[index];
@@ -845,19 +847,24 @@ int zbForecast(float zbCurrent) {
 
 /**
   Store previous athmospheric pressure values for each report in the last zbHours hours
-  @param y current value
+
+  @param y current pressure value in dPa
 */
-void rgStore(float y) {
+void rgStore(int y) {
   rgY[rgIdx] = y;
   rgIdx++;
   if (rgIdx >= rgMax) rgIdx = 0; // wrap around
-  if (rgCnt < rgMax)  rgCnt++;   // count the stored values
+  if (rgCnt <  rgMax) rgCnt++;   // count the stored values
 }
 
 /**
   Linear regression
+
+  @param A the a coefficient (pass by pointer)
+  @param B the b coefficient (pass by pointer)
+  @param S the standard deviation (pass by pointer)
 */
-void rgLnRegr() {
+void rgLnRegr(float *A, float *B, float *S) {
   int i, iy = 0;
   float denom, dy, x, y;
   float a1 = 0, a2 = 0, s = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0;
@@ -868,7 +875,7 @@ void rgLnRegr() {
     int j = i + iy;
     if (j >= rgMax) j -= rgMax;
     x = i;
-    y = rgY[j];
+    y = (float)rgY[j];
     s1 += x;
     s2 += x * x;
     s3 += y;
@@ -881,13 +888,13 @@ void rgLnRegr() {
     for (i = 0; i < rgCnt; i++) {
       int j = i + iy;
       if (j >= rgMax) j -= rgMax;
-      dy = rgY[j] - (a2 * i + a1);
+      dy = (float)rgY[j] - (a2 * i + a1);
       s += dy * dy;
     }
-    // Store the coefficients
-    rgAB[0] = a2;
-    rgAB[1] = a1;
-    rgAB[2] = sqrt(s / (rgCnt - 1));
+    // Return the coefficients
+    *A = a2;
+    *B = a1;
+    *S = sqrt(s / (rgCnt - 1));
   }
 }
 
