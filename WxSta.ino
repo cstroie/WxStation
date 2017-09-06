@@ -53,7 +53,7 @@ const char nodename[] = "wxsta-dev";
 const char NODENAME[] = "WxSta";
 const char nodename[] = "wxsta";
 #endif
-const char VERSION[]  = "4.1";
+const char VERSION[]  = "4.1.1";
 bool       PROBE      = true;                   // True if the station is being probed
 const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
@@ -180,16 +180,15 @@ const char zbFcW[] PROGMEM = "Rain at frequent intervals";
 const char zbFcX[] PROGMEM = "Rain, very unsettled";
 const char zbFcY[] PROGMEM = "Stormy, may improve";
 const char zbFcZ[] PROGMEM = "Stormy, much rain";
-const char* const zbFc[] PROGMEM = {zbFcA, zbFcB, zbFcC, zbFcD, zbFcE, zbFcF, zbFcG,
-                                    zbFcH, zbFcI, zbFcJ, zbFcK, zbFcL, zbFcM, zbFcN,
-                                    zbFcO, zbFcP, zbFcQ, zbFcR, zbFcS, zbFcT, zbFcU,
-                                    zbFcV, zbFcW, zbFcX, zbFcY, zbFcZ
+const char* const zbFc[] PROGMEM = {zbFcA, zbFcB, zbFcC, zbFcD, zbFcE, zbFcF, zbFcG, zbFcH, zbFcI,
+                                    zbFcJ, zbFcK, zbFcL, zbFcM, zbFcN, zbFcO, zbFcP, zbFcQ, zbFcR,
+                                    zbFcS, zbFcT, zbFcU, zbFcV, zbFcW, zbFcX, zbFcY, zbFcZ
                                    };
 
 // Forecast selectors for rising, steady and falling trend
-int zbRs[] = {25, 25, 25, 24, 24, 19, 16, 12, 11,  9,  8,  6,  5,  2,  1,  1,  0,  0,  0,  0,  0,  0};
-int zbSt[] = {25, 25, 25, 25, 25, 25, 23, 23, 22, 18, 15, 13, 10,  4,  1,  1,  0,  0,  0,  0,  0,  0};
-int zbFl[] = {25, 25, 25, 25, 25, 25, 25, 25, 23, 23, 21, 20, 17, 14,  7,  3,  1,  1,  1,  0,  0,  0};
+byte zbRs[] = {25, 25, 25, 24, 24, 19, 16, 12, 11,  9,  8,  6,  5,  2,  1,  1,  0,  0,  0,  0,  0,  0};
+byte zbSt[] = {25, 25, 25, 25, 25, 25, 23, 23, 22, 18, 15, 13, 10,  4,  1,  1,  0,  0,  0,  0,  0,  0};
+byte zbFl[] = {25, 25, 25, 25, 25, 25, 25, 25, 23, 23, 21, 20, 17, 14,  7,  3,  1,  1,  1,  0,  0,  0};
 
 // Various
 const char pstrD[]  PROGMEM = "%d";
@@ -527,15 +526,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 #endif
 
   // Decompose the topic
-  // TODO strtok
-  char *pRoot = NULL, *pTrunk = NULL, *pBranch = NULL;
-  pRoot = topic;
-  pTrunk = strchr(pRoot, '/');
-  if (pTrunk != NULL)
-    *pTrunk++ = '\0';
-  pBranch = strchr(pTrunk, '/');
-  if (pBranch != NULL)
-    *pBranch++ = '\0';
+  char *pRoot   = strtok(topic, "/");
+  char *pTrunk  = strtok(NULL,  "/");
+  char *pBranch = strtok(NULL,  "/");
 
   // Dispatcher
   if (strcmp(pRoot, "command") == 0) {
@@ -844,9 +837,9 @@ int zbForecast(int zbCurrent) {
     // Get the forecast
     index = round(22 * (pLst - zbBaroBot) / range);
     if ((index >= 0) and (index <= 22)) {
-      if      (trend > 0) result = zbRs[index];
-      else if (trend < 0) result = zbFl[index];
-      else                result = zbSt[index];
+      if      (trend > 0) result = (int)zbRs[index];
+      else if (trend < 0) result = (int)zbFl[index];
+      else                result = (int)zbSt[index];
     }
     // Set the next timer
     zbNextTime += zbDelay;
