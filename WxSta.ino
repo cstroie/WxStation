@@ -53,7 +53,7 @@ const char nodename[] = "wxsta-dev";
 const char NODENAME[] = "WxSta";
 const char nodename[] = "wxsta";
 #endif
-const char VERSION[]  = "4.0";
+const char VERSION[]  = "4.1";
 bool       PROBE      = true;                   // True if the station is being probed
 const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
@@ -559,9 +559,10 @@ void wifiCallback(WiFiManager *wifiMgr) {
   @param *pkt the packet to send
 */
 void aprsSend(const char *pkt) {
+#ifndef DEVEL
   aprsClient.print(pkt);
   yield();
-  //aprsClient.write((uint8_t *)pkt, strlen(pkt));
+#endif
 #ifdef DEBUG
   Serial.print(pkt);
 #endif
@@ -776,9 +777,14 @@ void aprsSendPosition(const char *comment = NULL) {
   sprintf_P(buf, PSTR("%06d"), altFeet);
   strncat(aprsPkt, buf, sizeof(buf));
   strcat_P(aprsPkt, pstrSP);
-  if (comment != NULL) strcat(aprsPkt, comment);
-  else strcat(aprsPkt, NODENAME);
-  if (PROBE) strcat_P(aprsPkt, PSTR(" [PROBE]"));
+  if (comment != NULL)
+    strcat(aprsPkt, comment);
+  else {
+    strcat(aprsPkt, NODENAME);
+    strcat_P(aprsPkt, pstrSL);
+    strcat(aprsPkt, VERSION);
+    if (PROBE) strcat_P(aprsPkt, PSTR(" [PROBE]"));
+  }
   strcat_P(aprsPkt, eol);
   aprsSend(aprsPkt);
 }
@@ -1199,7 +1205,7 @@ void loop() {
                         rMedOut(MD_SRAD));
         // Send the telemetry
         //aprsSendTelemetrySetup();
-        aprsSendTelemetry(rMedOut(MD_VCC) >> 2 - 625,
+        aprsSendTelemetry((rMedOut(MD_VCC) - 2500) >> 2,
                           -rMedOut(MD_RSSI),
                           rMedOut(MD_HEAP) >> 8,
                           rMedOut(MD_VISI) >> 8,
