@@ -526,9 +526,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 #endif
 
   // Decompose the topic
-  char *pRoot   = strtok(topic, "/");
-  char *pTrunk  = strtok(NULL,  "/");
-  char *pBranch = strtok(NULL,  "/");
+  // TODO lowercase
+  char *pRoot = NULL, *pTrunk = NULL, *pBranch = NULL;
+  if (pRoot = strtok(topic, "/"))
+    if (pTrunk = strtok(NULL, "/"))
+      if (pBranch = strtok(NULL, "/"));
 
   // Dispatcher
   if (strcmp(pRoot, "command") == 0) {
