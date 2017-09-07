@@ -1197,8 +1197,8 @@ void loop() {
       if (aprsClient.connect(aprsServer, aprsPort)) {
         // Authentication
         aprsAuthenticate();
-        // Send the position, altitude and comment in firsts 10 minutes after boot
-        if (millis() < 600000UL) aprsSendPosition();
+        // Send the position, altitude and comment in firsts minutes after boot
+        if (millis() < snsDelay) aprsSendPosition();
         // Send weather data
         aprsSendWeather(rMedOut(MD_TEMP),
                         rMedOut(MD_HMDT),
