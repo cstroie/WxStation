@@ -24,9 +24,9 @@
   various local telemetry.
 */
 
-// The DEBUG and DEVEL flag
+// The DEBUG and DEVEL flags
 #define DEBUG
-//#define DEVEL
+#define DEVEL
 
 // The sensors are connected to I2C
 #define SDA 0
@@ -53,7 +53,7 @@ const char nodename[] = "wxsta-dev";
 const char NODENAME[] = "WxSta";
 const char nodename[] = "wxsta";
 #endif
-const char VERSION[]  = "4.1.1";
+const char VERSION[]  = "4.2";
 bool       PROBE      = true;                   // True if the station is being probed
 const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
@@ -106,9 +106,9 @@ const char aprsTlmBITS[]  PROGMEM = ":BITS.10011111, ";
 const char eol[]          PROGMEM = "\r\n";
 
 // Reports and measurements
-const int aprsRprtHour   = 10; // Number of APRS reports per hour
+const int aprsRprtHour   = 12; // Number of APRS reports per hour
 const int aprsMsrmMax    = 5;  // Number of measurements per report (keep even)
-int       aprsMsrmCount  = 0;  // Measurements counter
+int       aprsMsrmCount  = 1;  // Measurements counter (force one initial report)
 int       aprsTlmSeq     = 0;  // Telemetry sequence mumber
 
 // Telemetry bits
@@ -197,7 +197,7 @@ const char pstrSP[] PROGMEM = " ";
 const char pstrCL[] PROGMEM = ":";
 const char pstrSL[] PROGMEM = "/";
 
-
+// Make sure some required macros are defined
 #undef max
 #define max(a,b) ((a)>(b)?(a):(b))
 #undef min
@@ -213,7 +213,8 @@ const char pstrSL[] PROGMEM = "/";
 */
 int rMedOut(int idx) {
   // Return the last value if the buffer is not full yet
-  if (rMed[idx][0] < 3) return rMed[idx][3];
+  if (rMed[idx][0] < 3)
+    return rMed[idx][3];
   else {
     // Get the maximum and the minimum
     int the_max = max(max(rMed[idx][1], rMed[idx][2]), rMed[idx][3]);
@@ -265,15 +266,14 @@ unsigned long timeUNIX(bool sync = true) {
     unsigned long utm = ntpSync();
     if (utm == 0) {
       // Time sync has failed, sync again over one minute
-      ntpNextSync += 1UL * 60 * 1000;
+      ntpNextSync = millis() + 60000UL;
       ntpOk = false;
-      // Try to get old time from eeprom, if time delta is zero
     }
     else {
       // Compute the new time delta
       ntpDelta = utm - (millis() / 1000);
       // Time sync has succeeded, sync again in 8 hours
-      ntpNextSync += 8UL * 60 * 60 * 1000;
+      ntpNextSync = millis() + 28800000UL;
       ntpOk = true;
       Serial.print(F("Network UNIX Time: 0x"));
       Serial.println(utm, 16);
@@ -355,11 +355,11 @@ unsigned long uptime(char *buf, size_t len) {
   int hh = (upt % 86400L) / 3600;
   int dd =  upt / 86400L;
   // Create the formatted time
-  snprintf_P(buf, len, PSTR("%d days, %02d:%02d:%02d"), dd, hh, mm, ss);
+  if (dd == 1) snprintf_P(buf, len, PSTR("%d day, %02d:%02d:%02d"),  dd, hh, mm, ss);
+  else         snprintf_P(buf, len, PSTR("%d days, %02d:%02d:%02d"), dd, hh, mm, ss);
   // Return the uptime in seconds
   return upt;
 }
-
 
 /**
   Display the WiFi parameters
@@ -514,7 +514,7 @@ boolean mqttReconnect() {
   @param payload the message payload (byte array)
   @param length the length of the message payload (unsigned int)
 */
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
+void mqttCallback(char *topic, byte *payload, unsigned int length) {
   // Make a limited copy of the payload and make sure it ends with \0
   char message[100];
   if (length > 100) length = 100;
@@ -525,8 +525,13 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.printf("MQTT %s: %s\r\n", topic, message);
 #endif
 
+  // Lowercase the topic
+  while (*topic) {
+    *topic = tolower((unsigned char) * topic);
+    topic++;
+  }
+
   // Decompose the topic
-  // TODO lowercase
   char *pRoot = NULL, *pTrunk = NULL, *pBranch = NULL;
   if (pRoot = strtok(topic, "/"))
     if (pTrunk = strtok(NULL, "/"))
@@ -593,11 +598,10 @@ void aprsAuthenticate() {
   strcat_P(aprsPkt, PSTR(" vers "));
   strcat  (aprsPkt, NODENAME);
   strcat_P(aprsPkt, pstrSP);
-  strcat_P(aprsPkt, VERSION);
+  strcat  (aprsPkt, VERSION);
   strcat_P(aprsPkt, eol);
   aprsSend(aprsPkt);
 }
-
 
 /**
   Send APRS status
@@ -612,7 +616,7 @@ void aprsSendStatus(const char *message) {
     strcpy_P(aprsPkt, aprsCallSign);
     strcat_P(aprsPkt, aprsPath);
     strcat_P(aprsPkt, PSTR(">"));
-    strcat(aprsPkt, message);
+    strcat  (aprsPkt, message);
     strcat_P(aprsPkt, eol);
     aprsSend(aprsPkt);
   }
@@ -620,7 +624,7 @@ void aprsSendStatus(const char *message) {
 
 /**
   Send APRS position and altitude
-  FW0690>APRS,TCPIP*:!DDMM.hhN/DDDMM.hhW$comments
+  FW0690>APRS,TCPIP*:!DDMM.hhN/DDDMM.hhW$/A=000000 comment
 
   @param comment the comment to append
 */
@@ -631,7 +635,7 @@ void aprsSendPosition(const char *comment = NULL) {
   strcat_P(aprsPkt, PSTR("!"));
   strcat_P(aprsPkt, aprsLocation);
   strcat_P(aprsPkt, PSTR("/A="));
-  char buf[7];
+  char buf[10];
   sprintf_P(buf, PSTR("%06d"), altFeet);
   strncat(aprsPkt, buf, sizeof(buf));
   strcat_P(aprsPkt, pstrSP);
@@ -657,21 +661,8 @@ void aprsSendPosition(const char *comment = NULL) {
   @param srad solar radiation in W/m^2
 */
 void aprsSendWeather(int temp, int hmdt, int pres, int srad) {
-  const int bufSize = 16;
+  const int bufSize = 10;
   char buf[bufSize] = "";
-  // Forecast as status report
-  int zbCode = zbForecast(pres);
-  // TODO
-  //aprsSendPosition(("Z " + String(zbCode)).c_str());
-  if (zbCode >= 0) {
-    const int bufSize = 40;
-    char buf[bufSize] = "";
-    strncpy_P(buf, zbFc[zbCode], bufSize);
-    // TODO
-    //strncpy_P(buf, (char*)pgm_read_dword(&(zbFc[zbCode])), bufSize);
-    aprsSendStatus(buf);
-  }
-
   // Weather report
   strcpy_P(aprsPkt, aprsCallSign);
   strcat_P(aprsPkt, aprsPath);
@@ -686,14 +677,12 @@ void aprsSendWeather(int temp, int hmdt, int pres, int srad) {
     snprintf_P(buf, bufSize, PSTR("t%03d"), temp);
     strncat(aprsPkt, buf, bufSize);
   }
-  else {
+  else
     strcat_P(aprsPkt, PSTR("t..."));
-  }
   // Humidity
   if (hmdt >= 0) {
-    if (hmdt == 100) {
+    if (hmdt == 100)
       strcat_P(aprsPkt, PSTR("h00"));
-    }
     else {
       snprintf_P(buf, bufSize, PSTR("h%02d"), hmdt);
       strncat(aprsPkt, buf, bufSize);
@@ -705,8 +694,9 @@ void aprsSendWeather(int temp, int hmdt, int pres, int srad) {
     strncat(aprsPkt, buf, bufSize);
   }
   // Solar radiation, if valid
-  if (srad >= 0 and srad <= 999) {
-    snprintf_P(buf, bufSize, PSTR("L%03d"), srad);
+  if (srad >= 0) {
+    if (srad < 1000) snprintf_P(buf, bufSize, PSTR("L%03d"), srad);
+    else             snprintf_P(buf, bufSize, PSTR("l%03d"), srad - 1000);
     strncat(aprsPkt, buf, bufSize);
   }
   // Comment (device name)
@@ -736,9 +726,7 @@ void aprsSendTelemetry(int p1, int p2, int p3, int p4, int p5, byte bits) {
   char buf[bufSize] = "";
   strcpy_P(aprsPkt, aprsCallSign);
   strcat_P(aprsPkt, aprsPath);
-  strcat_P(aprsPkt, PSTR("T"));
-  // TODO
-  snprintf_P(buf, bufSize, PSTR("#%03d,%03d,%03d,%03d,%03d,%03d,"), aprsTlmSeq, p1, p2, p3, p4, p5);
+  snprintf_P(buf, bufSize, PSTR("T#%03d,%03d,%03d,%03d,%03d,%03d,"), aprsTlmSeq, p1, p2, p3, p4, p5);
   strncat(aprsPkt, buf, bufSize);
   itoa(bits, buf, 2);
   strncat(aprsPkt, buf, bufSize);
@@ -750,45 +738,66 @@ void aprsSendTelemetry(int p1, int p2, int p3, int p4, int p5, byte bits) {
   Send APRS telemetry setup
 */
 void aprsSendTelemetrySetup() {
-  const int padSize = 10;
+  // The object's call sign has to be padded with spaces until 9 chars long
+  const int padSize = 9;
   char padCallSign[padSize] = " ";
-  strcpy_P(padCallSign, aprsCallSign);  // Workaround
-  sprintf_P(padCallSign, PSTR("%-9s"), padCallSign);
-  // Parameter names
+  // Copy the call sign from PROGMEM
+  strcpy_P(padCallSign, aprsCallSign);
+  // Pad with spaces, then make sure it ends with '\0'
+  for (int i = strlen(padCallSign); i < padSize; i++)
+    padCallSign[i] = ' ';
+  padCallSign[padSize] = '\0';
+  // Create the common header of the packet
   strcpy_P(aprsPkt, aprsCallSign);
   strcat_P(aprsPkt, aprsPath);
   strcat_P(aprsPkt, pstrCL);
   strncat(aprsPkt, padCallSign, padSize);
+  // At this point, keep the size of the packet header,
+  // so we can trim the packet and append to it again
+  int lenHeader = strlen(aprsPkt);
+  // Parameter names
   strcat_P(aprsPkt, aprsTlmPARM);
   strcat_P(aprsPkt, eol);
   aprsSend(aprsPkt);
+  // Trim the packet
+  aprsPkt[lenHeader] = '\0';
   // Equations
-  strcpy_P(aprsPkt, aprsCallSign);
-  strcat_P(aprsPkt, aprsPath);
-  strcat_P(aprsPkt, pstrCL);
-  strncat(aprsPkt, padCallSign, padSize);
   strcat_P(aprsPkt, aprsTlmEQNS);
   strcat_P(aprsPkt, eol);
   aprsSend(aprsPkt);
+  // Trim the packet
+  aprsPkt[lenHeader] = '\0';
   // Units
-  strcpy_P(aprsPkt, aprsCallSign);
-  strcat_P(aprsPkt, aprsPath);
-  strcat_P(aprsPkt, pstrCL);
-  strncat(aprsPkt, padCallSign, padSize);
   strcat_P(aprsPkt, aprsTlmUNIT);
   strcat_P(aprsPkt, eol);
   aprsSend(aprsPkt);
+  // Trim the packet
+  aprsPkt[lenHeader] = '\0';
   // Bit sense and project name
-  strcpy_P(aprsPkt, aprsCallSign);
-  strcat_P(aprsPkt, aprsPath);
-  strcat_P(aprsPkt, pstrCL);
-  strncat(aprsPkt, padCallSign, padSize);
   strcat_P(aprsPkt, aprsTlmBITS);
   strcat(aprsPkt, NODENAME);
   strcat_P(aprsPkt, pstrSL);
   strcat(aprsPkt, VERSION);
   strcat_P(aprsPkt, eol);
   aprsSend(aprsPkt);
+}
+
+/**
+  Send the weather forecast as APRS status report
+  FW0690>APRS,TCPIP*:>Showery, becoming less settled
+
+  @param pres athmospheric pressure (QNH) in dPa
+*/
+void aprsSendForecast(int pres) {
+  // Get the Zambretti code
+  int zbCode = zbForecast(pres);
+  // If valid, send the report
+  if (zbCode >= 0) {
+    // Need a larger buffer
+    char buf[40] = "";
+    strncpy_P(buf, zbFc[zbCode], sizeof(buf));
+    aprsSendStatus(buf);
+  }
 }
 
 /**
@@ -801,9 +810,6 @@ int zbForecast(int zbCurrent) {
   int result = -1;
   // Keep the current value in the circular buffer for linear regression
   rgStore(zbCurrent);
-  // TODO
-  //aprsSendPosition(("C=" + String(rgCnt)).c_str());
-
   // If first run, set the timeout to the next hour
   unsigned long utm = timeUNIX(false);
   unsigned long  mm = (utm % 3600) / 60;
@@ -817,27 +823,24 @@ int zbForecast(int zbCurrent) {
     // Compute the linear regression
     float rgA, rgB, rgS;
     rgLnRegr(&rgA, &rgB, &rgS);
-    // TODO
-    //aprsSendPosition(("A=" + String(rgA, 3) + ", B=" + String(rgB, 3) + ", S=" + String(rgS, 3)).c_str());
     // Compute the pressure variation and last pressure (according to the equation)
-    int pVar = round(rgA * rgCnt);
-    int pLst = round(pVar + rgB);
-    // TODO
-    //aprsSendPosition(("V=" + String(pVar) + ", L=" + String(pLst)).c_str());
+    int pVar = lround(rgA * rgCnt);
+    int pLst = lround(pVar + rgB);
     // Get the trend
     if      (pVar >  zbBaroTrs) trend =  1;
     else if (pVar < -zbBaroTrs) trend = -1;
-    // Corrections for summer
-    // FIXME
-    //int mon = month();
-    //if ((mon >= 4) and (mon <= 9)) {
-    //  if      (trend > 0) pLst += range * 0.07;
-    //  else if (trend < 0) pLst -= range * 0.07;
-    //}
+    // Compute the approximate day of the year,
+    // no great precision required
+    int appday = lround(((timeUNIX(false) / 315576UL) % 100) * 365 / 100);
+    // Corrections for summer (april..september)
+    if ((appday >= 90) and (appday <= 270)) {
+      if      (trend > 0) pLst += range * 7 / 100;
+      else if (trend < 0) pLst -= range * 7 / 100;
+    }
     // Validate the interval
     if (pLst > zbBaroTop) pLst = zbBaroTop - zbBaroTrs - zbBaroTrs;
     // Get the forecast
-    index = round(22 * (pLst - zbBaroBot) / range);
+    index = lround(22 * (pLst - zbBaroBot) / range);
     if ((index >= 0) and (index <= 22)) {
       if      (trend > 0) result = (int)zbRs[index];
       else if (trend < 0) result = (int)zbFl[index];
@@ -864,11 +867,11 @@ void rgStore(int y) {
 /**
   Linear regression
 
-  @param A the a coefficient (pass by pointer)
-  @param B the b coefficient (pass by pointer)
+  @param A the alpha coefficient (pass by pointer)
+  @param B the beta coefficient (pass by pointer)
   @param S the standard deviation (pass by pointer)
 */
-void rgLnRegr(float *A, float *B, float *S) {
+void rgLnRegr(float * A, float * B, float * S) {
   int i, iy = 0;
   float denom, dy, x, y;
   float a1 = 0, a2 = 0, s = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0;
@@ -1046,9 +1049,9 @@ void loop() {
   // Read the sensors and publish telemetry
   if (millis() >= snsNextTime) {
     // Count to check if we need to send the APRS data
-    if (++aprsMsrmCount >= aprsMsrmMax)
+    if (aprsMsrmCount-- <= 0)
       // Restart the counter
-      aprsMsrmCount = 0;
+      aprsMsrmCount = aprsMsrmMax - 1;
     // Repeat sensor reading after the delay
     snsNextTime += snsDelay;
     // Set the telemetry bit 7 if the station is being probed
@@ -1081,15 +1084,15 @@ void loop() {
                    (log(hmdt / 100.0) + ((17.625 * temp) / (243.04 + temp))) /
                    (17.625 - log(hmdt / 100.0) - ((17.625 * temp) / (243.04 + temp)));
       // Add to the round median filter
-      rMedIn(MD_TEMP, (int)(temp * 9 / 5 + 32));      // Store directly integer Fahrenheit
-      rMedIn(MD_PRES, (int)(slvl / 10));              // Store directly sea level in dPa
-      rMedIn(MD_HMDT, (int)hmdt);                     // Humidity
+      rMedIn(MD_TEMP, lround(temp * 9 / 5 + 32));      // Store directly integer Fahrenheit
+      rMedIn(MD_PRES, lround(slvl / 10));              // Store directly sea level in dPa
+      rMedIn(MD_HMDT, lround(hmdt));                   // Humidity
       // Compose and publish the telemetry
-      mqttPub((int)temp, mqttTopicSns, "temperature");
-      mqttPub((int)hmdt, mqttTopicSns, "humidity");
-      mqttPub((int)dewp, mqttTopicSns, "dewpoint");
-      mqttPub((int)(pres / 100), mqttTopicSns, "pressure");
-      mqttPub((int)(slvl / 100), mqttTopicSns, "sealevel");
+      mqttPub(lround(temp), mqttTopicSns, "temperature");
+      mqttPub(lround(hmdt), mqttTopicSns, "humidity");
+      mqttPub(lround(dewp), mqttTopicSns, "dewpoint");
+      mqttPub(lround(pres / 100), mqttTopicSns, "pressure");
+      mqttPub(lround(slvl / 100), mqttTopicSns, "sealevel");
     }
     else {
       // Store invalid values if no sensor
@@ -1120,19 +1123,19 @@ void loop() {
         // TODO Adapt the shutter if saturated
         if (light.getLux(lightGain, lightMS, luxVis, luxIrd, lux)) {
           // Compose and publish the telemetry
-          mqttPub((int)lux,    mqttTopicSns, "illuminance");
-          mqttPub((int)luxVis, mqttTopicSns, "visible");
-          mqttPub((int)luxIrd, mqttTopicSns, "infrared");
+          mqttPub(lround(lux), mqttTopicSns, "illuminance");
+          mqttPub(luxVis,      mqttTopicSns, "visible");
+          mqttPub(luxIrd,      mqttTopicSns, "infrared");
           // Calculate the solar radiation in W/m^2
-          solRad = (int)(lux * 0.0079);
-          // If the sensor is saturated, limit the reading to maximum value
-          if (solRad > 999) solRad = 999;
+          solRad = lround(lux * 0.0079);
+          // Limit the reading to a maximum value accepted by APRS
+          if (solRad > 1999) solRad = 1999;
         }
         else {
-          // Saturated
+          // Sensor is aturated
           lux = -1;
-          // If the sensor is saturated, limit the reading to maximum value
-          if (solRad > 999) solRad = 999;
+          // Limit the reading to a maximum value
+          if (solRad > 1999) solRad = 1999;
           // Set the bit 4 to show the sensor is saturated
           aprsTlmBits |= B00010000;
         }
@@ -1174,10 +1177,10 @@ void loop() {
     strncpy(topic, mqttTopicRpt, sizeof(topic));
     strcat_P(topic, pstrSL);
     strcat(topic, nodename);
-    // Uptime
+    // Uptime in seconds and text
     unsigned long ups = 0;
     ups = uptime(text, sizeof(text));
-    mqttPubRet(ups, topic, "uptime");
+    mqttPubRet(ups,  topic, "uptime");
     mqttPubRet(text, topic, "uptime", "text");
     // Free heap
     mqttPubRet(heap, topic, "heap");
@@ -1209,6 +1212,8 @@ void loop() {
                           rMedOut(MD_VISI) >> 8,
                           rMedOut(MD_IRED) >> 8,
                           aprsTlmBits);
+        // Send the forecast, if we have one
+        aprsSendForecast(rMedOut(MD_PRES));
         //aprsSendStatus("Fine weather");
         // Close the connection
         aprsClient.stop();
