@@ -28,6 +28,9 @@
 #define DEBUG
 #define DEVEL
 
+// User settings
+#include "UserSettings.h"
+
 // The sensors are connected to I2C
 #define SDA 0
 #define SCL 2
@@ -42,6 +45,9 @@
 #include <ESP8266mDNS.h>
 #include <ArduinoOTA.h>
 
+// HTTP Client
+#include <ESP8266HTTPClient.h>
+
 // MQTT
 #include <PubSubClient.h>
 
@@ -53,7 +59,7 @@ const char nodename[] = "wxsta-dev";
 const char NODENAME[] = "WxSta";
 const char nodename[] = "wxsta";
 #endif
-const char VERSION[]  = "4.2";
+const char VERSION[]  = "4.3";
 bool       PROBE      = true;                   // True if the station is being probed
 const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
@@ -69,6 +75,15 @@ unsigned long ntpNextSync           = 0UL;                    // Next time to sy
 unsigned long ntpDelta              = 0UL;                    // Difference between real time and internal clock
 bool          ntpOk                 = false;                  // Flag to know the time is accurate
 const int     ntpTZ                 = 0;                      // Time zone
+
+// Weather Underground parameters
+const char wuID[]           = WU_ID;
+const char wuPASS[]         = WU_PASS;
+const char wuURL[] PROGMEM  = "http://weatherstation.wunderground.com/weatherstation/updateweatherstation.php?"
+                              "ID=%s&PASSWORD=%s&dateutc=now"
+                              "&tempf=%d&dewptf=%d&humidity=%d&baromin=%d.%d"
+                              "&solarradiation=%d"
+                              "&softwaretype=%s%%2F%s&action=updateraw";
 
 // MQTT parameters
 WiFiClient wifiClient;                                         // WiFi TCP client for MQTT
@@ -91,14 +106,14 @@ const char          mqttTopicRpt[] = "report";
 WiFiClient  aprsClient;                                                                     // WiFi TCP client for APRS
 const char  aprsServer[]  = "cwop5.aprs.net";                                               // CWOP APRS-IS server address to connect to
 const int   aprsPort      = 14580;                                                          // CWOP APRS-IS port
-const int   altMeters     = 83;                                                             // Altitude in Bucharest
+const int   altMeters     = APRS_ALTITUDE;                                                  // Altitude in Bucharest
 const long  altFeet       = (long)(altMeters * 3.28084);                                    // Altitude in feet
 const float altCorr       = pow((float)(1.0 - 2.25577e-5 * altMeters), (float)(-5.25578));  // Altitude correction for QNH
 
-const char aprsCallSign[] PROGMEM = "FW0690";
-const char aprsPassCode[] PROGMEM = "-1";
+const char aprsCallSign[] PROGMEM = APRS_CALLSIGN;
+const char aprsPassCode[] PROGMEM = APRS_PASSCODE;
 const char aprsPath[]     PROGMEM = ">APRS,TCPIP*:";
-const char aprsLocation[] PROGMEM = "4427.67N/02608.03E_";
+const char aprsLocation[] PROGMEM = APRS_LAT "/" APRS_LON "_";
 const char aprsTlmPARM[]  PROGMEM = ":PARM.Vcc,RSSI,Heap,IRed,Visb,PROBE,ATMO,LUX,SAT,VCC,HT,RB,TM";
 const char aprsTlmEQNS[]  PROGMEM = ":EQNS.0,0.004,2.5,0,-1,0,0,256,0,0,256,0,0,256,0";
 const char aprsTlmUNIT[]  PROGMEM = ":UNIT.V,dBm,Bytes,units,units,prb,on,on,sat,bad,ht,rb,er";
@@ -118,7 +133,7 @@ char      aprsTlmBits    = B00000000;
 char      aprsPkt[100]   = "";
 
 // Statistics (round median filter for the last 3 values)
-enum      rMedIdx {MD_TEMP, MD_HMDT, MD_PRES, MD_SRAD, MD_VISI, MD_IRED, MD_RSSI, MD_VCC, MD_HEAP, MD_ALL};
+enum      rMedIdx {MD_TEMP, MD_DEWP, MD_HMDT, MD_PRES, MD_SRAD, MD_VISI, MD_IRED, MD_RSSI, MD_VCC, MD_HEAP, MD_ALL};
 int       rMed[MD_ALL][4] = {0, -1, -1, -1};
 
 // Sensors
@@ -906,6 +921,36 @@ void rgLnRegr(float * A, float * B, float * S) {
 }
 
 /**
+  Weather Underground
+
+  @param temp temperature in Fahrenheit
+  @param dewp dew point in Fahrenheit
+  @param hmdt relative humidity in percents
+  @param pres athmospheric pressure (QNH) in dPa
+  @param srad solar radiation in W/m^2
+*/
+void wuUpdate(int temp, int dewp, int hmdt, int pres, int srad) {
+  // Only on valid data
+  if (temp >= -460 and dewp >= -460 and hmdt >= 0 and pres >= 0 and srad >= 0) {
+    // Barometer in inHg
+    int baro = lround(pres * 0.02953);
+    // Compose the WU URL
+    const int bufSize = 250;
+    char buf[bufSize] = "";
+    snprintf_P(buf, bufSize, wuURL, wuID, wuPASS, temp, dewp, hmdt, baro / 10, baro % 10, srad, NODENAME, VERSION);
+    // The HTTP client
+    HTTPClient http;
+    http.begin(buf);
+    yield();
+    int httpCode = http.GET();
+    yield();
+    if (httpCode <= 0)
+      Serial.printf("WU failed: %s\n", http.errorToString(httpCode).c_str());
+    http.end();
+  }
+}
+
+/**
   Main Arduino setup function
 */
 void setup() {
@@ -1085,6 +1130,7 @@ void loop() {
                    (17.625 - log(hmdt / 100.0) - ((17.625 * temp) / (243.04 + temp)));
       // Add to the round median filter
       rMedIn(MD_TEMP, lround(temp * 9 / 5 + 32));      // Store directly integer Fahrenheit
+      rMedIn(MD_DEWP, lround(dewp * 9 / 5 + 32));      // Store directly integer Fahrenheit
       rMedIn(MD_PRES, lround(slvl / 10));              // Store directly sea level in dPa
       rMedIn(MD_HMDT, lround(hmdt));                   // Humidity
       // Compose and publish the telemetry
@@ -1097,6 +1143,7 @@ void loop() {
     else {
       // Store invalid values if no sensor
       rMedIn(MD_TEMP, -500);
+      rMedIn(MD_DEWP, -500);
       rMedIn(MD_PRES, -1);
       rMedIn(MD_HMDT, -1);
     }
@@ -1218,6 +1265,12 @@ void loop() {
         // Close the connection
         aprsClient.stop();
       };
+      // Send data to Weather Underground
+      wuUpdate(rMedOut(MD_TEMP),
+               rMedOut(MD_DEWP),
+               rMedOut(MD_HMDT),
+               rMedOut(MD_PRES),
+               rMedOut(MD_SRAD));
     }
   }
 }
