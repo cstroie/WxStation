@@ -26,7 +26,7 @@
 
 // The DEBUG and DEVEL flags
 #define DEBUG
-#define DEVEL
+//#define DEVEL
 
 // User settings
 #include "UserSettings.h"
@@ -59,7 +59,7 @@ const char nodename[] = "wxsta-dev";
 const char NODENAME[] = "WxSta";
 const char nodename[] = "wxsta";
 #endif
-const char VERSION[]  = "4.3";
+const char VERSION[]  = "4.3.1";
 bool       PROBE      = true;                   // True if the station is being probed
 const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
@@ -86,8 +86,8 @@ const char wuURL[] PROGMEM  = "http://weatherstation.wunderground.com/weathersta
                               "&softwaretype=%s%%2F%s&action=updateraw";
 
 // MQTT parameters
-WiFiClient wifiClient;                                         // WiFi TCP client for MQTT
-PubSubClient mqttClient(wifiClient);                           // MQTT client, based on WiFi client
+WiFiClient          wifiClient;                                 // WiFi TCP client for MQTT
+PubSubClient        mqttClient(wifiClient);                     // MQTT client, based on WiFi client
 #ifdef DEVEL
 const char          mqttId[]       = "wxsta-dev-eridu-eu-org";  // Development MQTT client ID
 #else
@@ -963,10 +963,10 @@ void setup() {
   Serial.print(" ");
   Serial.println(__DATE__);
 
+  // Set the host name
+  WiFi.hostname(NODENAME);
   // Try to connect to WiFi
   WiFiManager wifiManager;
-  // Reset settings
-  //wifiManager.resetSettings();
   wifiManager.setTimeout(300);
   wifiManager.setAPCallback(wifiCallback);
   wifiManager.autoConnect(NODENAME);
