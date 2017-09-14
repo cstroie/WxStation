@@ -68,7 +68,6 @@ int otaProgress       = 0;
 int otaPort           = 8266;
 
 // Time synchronization and time keeping
-WiFiUDP       ntpClient;                                      // NTP UDP client
 const char    ntpServer[] PROGMEM   = "europe.pool.ntp.org";  // NTP server to connect to (RFC5905)
 const int     ntpPort               = 123;                    // NTP port
 unsigned long ntpNextSync           = 0UL;                    // Next time to syncronize
@@ -311,6 +310,8 @@ unsigned long timeUNIX(bool sync = true) {
   The Unix time is returned, that is, seconds from 1970-01-01T00:00.
 */
 unsigned long ntpSync() {
+  // NTP UDP client
+  WiFiUDP ntpClient;
   // Open socket on arbitrary port
   bool ntpOk = ntpClient.begin(12321);
   // NTP request header: Only the first four bytes of an outgoing
@@ -349,8 +350,9 @@ unsigned long ntpSync() {
   // additionally, we account for how much we delayed reading the packet
   // since its arrival, which we assume on average to be pollIntv/2.
   ntpTime += (ntpClient.read() > 115 - pollIntv / 8);
-  // Discard the rest of the packet
+  // Discard the rest of the packet and stop
   ntpClient.flush();
+  ntpClient.stop();
   return ntpTime - 2208988800UL;            // convert to Unix time
 }
 
