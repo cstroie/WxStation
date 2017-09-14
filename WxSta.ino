@@ -45,9 +45,6 @@
 #include <ESP8266mDNS.h>
 #include <ArduinoOTA.h>
 
-// HTTP Client
-#include <ESP8266HTTPClient.h>
-
 // MQTT
 #include <PubSubClient.h>
 
@@ -76,13 +73,14 @@ bool          ntpOk                 = false;                  // Flag to know th
 const int     ntpTZ                 = 0;                      // Time zone
 
 // Weather Underground parameters
-const char wuID[]           = WU_ID;
-const char wuPASS[]         = WU_PASS;
-const char wuURL[] PROGMEM  = "http://weatherstation.wunderground.com/weatherstation/updateweatherstation.php?"
-                              "ID=%s&PASSWORD=%s&dateutc=now"
+const char wuServer[]       = "weatherstation.wunderground.com";
+const char wuPort           = 443;
+const char wuGET[] PROGMEM  = "GET /weatherstation/updateweatherstation.php?"
+                              "ID=" WU_ID "&PASSWORD=" WU_PASS "&dateutc=now"
                               "&tempf=%d&dewptf=%d&humidity=%d&baromin=%d.%d"
                               "&solarradiation=%d"
-                              "&softwaretype=%s%%2F%s&action=updateraw";
+                              "&softwaretype=%s%%2F%s&action=updateraw"
+                              " HTTP/1.1";
 
 // MQTT parameters
 WiFiClientSecure    wifiClient;                                 // WiFi TCP client for MQTT
@@ -936,19 +934,56 @@ void wuUpdate(int temp, int dewp, int hmdt, int pres, int srad) {
   if (temp >= -460 and dewp >= -460 and hmdt >= 0 and pres >= 0 and srad >= 0) {
     // Barometer in inHg
     int baro = lround(pres * 0.02953);
-    // Compose the WU URL
-    const int bufSize = 250;
-    char buf[bufSize] = "";
-    snprintf_P(buf, bufSize, wuURL, wuID, wuPASS, temp, dewp, hmdt, baro / 10, baro % 10, srad, NODENAME, VERSION);
-    // The HTTP client
-    HTTPClient http;
-    http.begin(buf);
-    yield();
-    int httpCode = http.GET();
-    yield();
-    if (httpCode <= 0)
-      Serial.printf("WU failed: %s\n", http.errorToString(httpCode).c_str());
-    http.end();
+
+    // The HTTPS client
+    WiFiClientSecure wuClient;
+    wuClient.setTimeout(5000);
+    //Serial.println(F("Connecting"));
+    if (wuClient.connect(wuServer, wuPort)) {
+      const int bufSize = 250;
+      char buf[bufSize] = "";
+
+      // Compose the WU request
+      snprintf_P(buf, bufSize, wuGET, temp, dewp, hmdt, baro / 10, baro % 10, srad, NODENAME, VERSION);
+      strcat_P(buf, eol);
+      wuClient.print(buf);
+      Serial.print(buf);
+      yield();
+      // Host
+      strcpy_P(buf, PSTR("Host: "));
+      strcat(buf, wuServer);
+      strcat_P(buf, eol);
+      wuClient.print(buf);
+      Serial.print(buf);
+      yield();
+      // User agent
+      strcpy_P(buf, PSTR("User-Agent: "));
+      strcat  (buf, NODENAME);
+      strcat_P(buf, pstrSP);
+      strcat  (buf, VERSION);
+      strcat_P(buf, eol);
+      wuClient.print(buf);
+      Serial.print(buf);
+      yield();
+      // Connection
+      strcpy_P(buf, PSTR("Connection: close"));
+      strcat_P(buf, eol);
+      strcat_P(buf, eol);
+      wuClient.print(buf);
+      Serial.print(buf);
+      yield();
+
+      // Get the response
+      while (wuClient.connected()) {
+        int rlen = wuClient.readBytesUntil('\r', buf, bufSize);
+        buf[rlen] = '\0';
+        Serial.print(buf);
+      }
+
+      // Close the connection
+      wuClient.stop();
+    }
+    //Serial.println(F("Done"));
   }
 }
 
