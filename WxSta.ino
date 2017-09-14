@@ -24,9 +24,8 @@
   various local telemetry.
 */
 
-// The DEBUG and DEVEL flags
+// The DEBUG flag
 #define DEBUG
-//#define DEVEL
 
 // User settings
 #include "UserSettings.h"
@@ -40,6 +39,7 @@
 
 // WiFi
 #include <ESP8266WiFi.h>
+#include <WiFiClientSecure.h>
 #include <WiFiManager.h>
 #include <WiFiUdp.h>
 #include <ESP8266mDNS.h>
@@ -86,7 +86,7 @@ const char wuURL[] PROGMEM  = "http://weatherstation.wunderground.com/weathersta
                               "&softwaretype=%s%%2F%s&action=updateraw";
 
 // MQTT parameters
-WiFiClient          wifiClient;                                 // WiFi TCP client for MQTT
+WiFiClientSecure    wifiClient;                                 // WiFi TCP client for MQTT
 PubSubClient        mqttClient(wifiClient);                     // MQTT client, based on WiFi client
 #ifdef DEVEL
 const char          mqttId[]       = "wxsta-dev-eridu-eu-org";  // Development MQTT client ID
@@ -94,7 +94,7 @@ const char          mqttId[]       = "wxsta-dev-eridu-eu-org";  // Development M
 const char          mqttId[]       = "wxsta-eridu-eu-org";      // Production MQTT client ID
 #endif
 const char          mqttServer[]   = "eridu.eu.org";            // MQTT server address to connect to
-const int           mqttPort       = 1883;                      // MQTT port
+const int           mqttPort       = 8883;                      // MQTT port
 const unsigned long mqttDelay      = 5000UL;                    // Delay between reconnection attempts
 unsigned long       mqttNextTime   = 0UL;                       // Next time to reconnect
 // Various MQTT topics
