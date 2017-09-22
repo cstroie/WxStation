@@ -1,5 +1,5 @@
 /**
-  WxSta - Weather probe based on ESP8266, WiFi connected
+  WxSta - Weather probe based on ESP8266-1, WiFi connected
 
   Copyright 2017 Costin STROIE <costinstroie@eridu.eu.org>
 
@@ -19,34 +19,39 @@
   WxSta.  If not, see <http://www.gnu.org/licenses/>.
 
 
-  WiFi connected weather probe, reading the athmospheric sensor BME280 and
-  the illuminance sensor TSL2561, publishing the measured data along with
-  various local telemetry.
+  WiFi connected weather probe, made up from ESP82266-1 reading the athmospheric
+  sensor BME280 and the illuminance sensor TSL2561.  The probe publishes
+  the measured data, along with various local telemetry, to CWOP and WU.
+
+  Use the board "Generic 8226 Module", flash size "1M (64K SPIFFS)".
 */
 
-// The DEBUG and DEVEL flags
+// The DEBUG flag
 #define DEBUG
-//#define DEVEL
 
 // User settings
 #include "UserSettings.h"
 
-// The sensors are connected to I2C
+// The sensors are connected to I2C, here we map the pins
 #define SDA 0
 #define SCL 2
+
+// Include the sensors libraries
 #include <Wire.h>
 #include <SparkFunBME280.h>
 #include <SparkFunTSL2561.h>
 
 // WiFi
 #include <ESP8266WiFi.h>
+#ifdef SSL
+#include <WiFiClientSecure.h>
+#else
+#include <WiFiClient.h>
+#endif
 #include <WiFiManager.h>
 #include <WiFiUdp.h>
 #include <ESP8266mDNS.h>
 #include <ArduinoOTA.h>
-
-// HTTP Client
-#include <ESP8266HTTPClient.h>
 
 // MQTT
 #include <PubSubClient.h>
@@ -76,16 +81,25 @@ bool          ntpOk                 = false;                  // Flag to know th
 const int     ntpTZ                 = 0;                      // Time zone
 
 // Weather Underground parameters
-const char wuID[]           = WU_ID;
-const char wuPASS[]         = WU_PASS;
-const char wuURL[] PROGMEM  = "http://weatherstation.wunderground.com/weatherstation/updateweatherstation.php?"
-                              "ID=%s&PASSWORD=%s&dateutc=now"
+const char wuServer[]       = "weatherstation.wunderground.com";
+#ifdef SSL
+const char wuPort           = 443;
+#else
+const char wuPort           = 80;
+#endif
+const char wuGET[] PROGMEM  = "GET /weatherstation/updateweatherstation.php?"
+                              "ID=" WU_ID "&PASSWORD=" WU_PASS "&dateutc=now"
                               "&tempf=%d&dewptf=%d&humidity=%d&baromin=%d.%d"
                               "&solarradiation=%d"
-                              "&softwaretype=%s%%2F%s&action=updateraw";
+                              "&softwaretype=%s%%2F%s&action=updateraw"
+                              " HTTP/1.1";
 
 // MQTT parameters
-WiFiClient          wifiClient;                                 // WiFi TCP client for MQTT
+#ifdef SSL
+WiFiClientSecure    wifiClient;                                 // Secure WiFi TCP client for MQTT
+#else
+WiFiClient          wifiClient;                                 // Plain WiFi TCP client for MQTT
+#endif
 PubSubClient        mqttClient(wifiClient);                     // MQTT client, based on WiFi client
 #ifdef DEVEL
 const char          mqttId[]       = "wxsta-dev-eridu-eu-org";  // Development MQTT client ID
@@ -93,7 +107,11 @@ const char          mqttId[]       = "wxsta-dev-eridu-eu-org";  // Development M
 const char          mqttId[]       = "wxsta-eridu-eu-org";      // Production MQTT client ID
 #endif
 const char          mqttServer[]   = "eridu.eu.org";            // MQTT server address to connect to
-const int           mqttPort       = 1883;                      // MQTT port
+#ifdef SSL
+const int           mqttPort       = 8883;                      // Secure MQTT port
+#else
+const int           mqttPort       = 1883;                      // Plain MQTT port
+#endif
 const unsigned long mqttDelay      = 5000UL;                    // Delay between reconnection attempts
 unsigned long       mqttNextTime   = 0UL;                       // Next time to reconnect
 // Various MQTT topics
@@ -936,19 +954,59 @@ void wuUpdate(int temp, int dewp, int hmdt, int pres, int srad) {
   if (temp >= -460 and dewp >= -460 and hmdt >= 0 and pres >= 0 and srad >= 0) {
     // Barometer in inHg
     int baro = lround(pres * 0.02953);
-    // Compose the WU URL
-    const int bufSize = 250;
-    char buf[bufSize] = "";
-    snprintf_P(buf, bufSize, wuURL, wuID, wuPASS, temp, dewp, hmdt, baro / 10, baro % 10, srad, NODENAME, VERSION);
-    // The HTTP client
-    HTTPClient http;
-    http.begin(buf);
-    yield();
-    int httpCode = http.GET();
-    yield();
-    if (httpCode <= 0)
-      Serial.printf("WU failed: %s\n", http.errorToString(httpCode).c_str());
-    http.end();
+
+#ifdef SSL
+    WiFiClientSecure wuClient;  // The HTTPS client
+#else
+    WiFiClient       wuClient;  // The HTTP client
+#endif
+    wuClient.setTimeout(5000);
+    //Serial.println(F("Connecting"));
+    if (wuClient.connect(wuServer, wuPort)) {
+      const int bufSize = 250;
+      char buf[bufSize] = "";
+
+      // Compose the WU request
+      snprintf_P(buf, bufSize, wuGET, temp, dewp, hmdt, baro / 10, baro % 10, srad, NODENAME, VERSION);
+      strcat_P(buf, eol);
+      wuClient.print(buf);
+      Serial.print(buf);
+      yield();
+      // Host
+      strcpy_P(buf, PSTR("Host: "));
+      strcat(buf, wuServer);
+      strcat_P(buf, eol);
+      wuClient.print(buf);
+      Serial.print(buf);
+      yield();
+      // User agent
+      strcpy_P(buf, PSTR("User-Agent: "));
+      strcat  (buf, NODENAME);
+      strcat_P(buf, pstrSP);
+      strcat  (buf, VERSION);
+      strcat_P(buf, eol);
+      wuClient.print(buf);
+      Serial.print(buf);
+      yield();
+      // Connection
+      strcpy_P(buf, PSTR("Connection: close"));
+      strcat_P(buf, eol);
+      strcat_P(buf, eol);
+      wuClient.print(buf);
+      Serial.print(buf);
+      yield();
+
+      // Get the response
+      while (wuClient.connected()) {
+        int rlen = wuClient.readBytesUntil('\r', buf, bufSize);
+        buf[rlen] = '\0';
+        Serial.print(buf);
+      }
+
+      // Close the connection
+      wuClient.stop();
+    }
+    //Serial.println(F("Done"));
   }
 }
 
