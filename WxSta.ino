@@ -165,7 +165,7 @@ const byte          lightAddr   = 0x23;                                   // The
 SFE_TSL2561         light;                                                // The illuminance sensor
 bool                lightOK     = false;                                  // The illuminance sensor presence flag
 boolean             lightGain   = false;                                  //    ~    ~    ~    ~    gain (true/false)
-unsigned char       lightSHTR   = 1;                                      //    ~    ~    ~    ~    shutter (0, 1, 2)
+unsigned char       lightSHTR   = 0;                                      //    ~    ~    ~    ~    shutter (0, 1, 2)
 unsigned int        lightMS;                                              //    ~    ~    ~    ~    integration timer
 
 // Set ADC to Voltage
@@ -176,7 +176,7 @@ int           zbBaroTop   = 10500;                  // Highest athmospheric pres
 int           zbBaroBot   =  9500;                  // Lowest athmospheric pressure
 int           zbBaroTrs   =    10;                  // Pressure threshold
 const int     zbHours     = 3;                      // Need the last 3 hours for forecast
-int           zbDelay     = 3600000UL;              // Report hourly
+int           zbDelay     = 3600UL * 1000UL;        // Report hourly
 unsigned long zbNextTime  = 0;                      // The next time to report, collect data till then
 
 // Linear regression computer
@@ -237,7 +237,7 @@ const char pstrSL[] PROGMEM = "/";
 
 
 /**
-  Simple median filter: get the median
+  Simple round median filter: get the median
   2014-03-25: started by David Cary
 
   @param idx the index in round median array
@@ -282,7 +282,7 @@ void rMedIn(int idx, int x) {
 */
 char charIP(const IPAddress ip, char *buf, size_t len, boolean pad = false) {
   if (pad) snprintf_P(buf, len, PSTR("%3d.%3d.%3d.%3d"), ip[0], ip[1], ip[2], ip[3]);
-  else     snprintf_P(buf, len, PSTR("%d.%d.%d.%d"), ip[0], ip[1], ip[2], ip[3]);
+  else     snprintf_P(buf, len, PSTR("%d.%d.%d.%d"),     ip[0], ip[1], ip[2], ip[3]);
 }
 
 /**
@@ -401,12 +401,16 @@ unsigned long uptime(char *buf, size_t len) {
 */
 void showWiFi() {
   if (WiFi.isConnected()) {
-    char ipbuf[16], gwbuf[16], nsbuf[16];
+    char ipbuf[16] = "";
+    char gwbuf[16] = "";
+    char nsbuf[16] = "";
 
-    charIP(WiFi.localIP(), ipbuf, sizeof(ipbuf), true);
-    charIP(WiFi.gatewayIP(), gwbuf, sizeof(ipbuf), true);
-    charIP(WiFi.dnsIP(), nsbuf, sizeof(ipbuf), true);
+    // Get the IPs as char arrays
+    charIP(WiFi.localIP(),   ipbuf, sizeof(ipbuf), true);
+    charIP(WiFi.gatewayIP(), gwbuf, sizeof(gwbuf), true);
+    charIP(WiFi.dnsIP(),     nsbuf, sizeof(nsbuf), true);
 
+    // Print
     Serial.println();
     Serial.print(F("WiFi connected to "));
     Serial.print(WiFi.SSID());
@@ -456,23 +460,6 @@ boolean mqttPubRet(const char *payload, const char *lvl1, const char *lvl2 = NUL
 }
 
 /**
-  Publish char array from program memory to topic
-*/
-boolean mqttPub_P(const char *payload, const char *lvl1, const char *lvl2 = NULL, const char *lvl3 = NULL, const boolean retain = false) {
-  const int bufSize = 64;
-  char buf[bufSize] = "";
-  strncpy_P(buf, payload, bufSize);
-  return mqttPub(buf, lvl1, lvl2, lvl3, retain);
-}
-
-/**
-  Publish char array from program memory to topic and retain
-*/
-boolean mqttPubRet_P(const char *payload, const char *lvl1, const char *lvl2 = NULL, const char *lvl3 = NULL, const boolean retain = true) {
-  return mqttPub_P(payload, lvl1, lvl2, lvl3, retain);
-}
-
-/**
   Publish integer to topic
 */
 boolean mqttPub(const int payload, const char *lvl1, const char *lvl2 = NULL, const char *lvl3 = NULL, const boolean retain = false) {
@@ -512,22 +499,25 @@ void mqttSubscribe(const char *lvl1, const char *lvl2 = NULL, bool all = false) 
 boolean mqttReconnect() {
   Serial.println(F("MQTT connecting..."));
   const int bufSize = 64;
-  char buf[bufSize];
+  char buf[bufSize] = "";
+  // The report topic
   strncpy(buf, mqttTopicRpt, bufSize);
   strcat_P(buf, pstrSL);
   strcat(buf, nodename);
+  // Connect and set LWM to "offline"
   if (mqttClient.connect(mqttId, buf, 0, true, "offline")) {
     // Publish the "online" status
     mqttPubRet("online", buf);
 
     // Publish the connection report
     strcat_P(buf, PSTR("/wifi"));
-    mqttPubRet(WiFi.hostname().c_str(), buf, "hostname");
+    mqttPubRet(WiFi.hostname().c_str(),   buf, "hostname");
     mqttPubRet(WiFi.macAddress().c_str(), buf, "mac");
-    mqttPubRet(WiFi.SSID().c_str(), buf, "ssid");
-    mqttPubRet(WiFi.RSSI(), buf, "rssi");
-    char ipbuf[16];
-    charIP(WiFi.localIP(), ipbuf, sizeof(ipbuf));
+    mqttPubRet(WiFi.SSID().c_str(),       buf, "ssid");
+    mqttPubRet(WiFi.RSSI(),               buf, "rssi");
+    // Buffer for IPs
+    char ipbuf[16] = "";
+    charIP(WiFi.localIP(),   ipbuf, sizeof(ipbuf));
     mqttPubRet(ipbuf, buf, "ip");
     charIP(WiFi.gatewayIP(), ipbuf, sizeof(ipbuf));
     mqttPubRet(ipbuf, buf, "gw");
@@ -536,7 +526,10 @@ boolean mqttReconnect() {
     mqttSubscribe(mqttTopicCmd, nodename, true);
 
     Serial.print(F("MQTT connected to "));
-    Serial.println(mqttServer);
+    Serial.print(mqttServer);
+    Serial.print(F(" port "));
+    Serial.print(mqttPort);
+    Serial.println(F("."));
   }
   yield();
   return mqttClient.connected();
@@ -551,7 +544,7 @@ boolean mqttReconnect() {
 */
 void mqttCallback(char *topic, byte *payload, unsigned int length) {
   // Make a limited copy of the payload and make sure it ends with \0
-  char message[100];
+  char message[100] = "";
   if (length > 100) length = 100;
   memcpy(message, payload, length);
   message[length] = '\0';
@@ -590,7 +583,7 @@ void wifiCallback(WiFiManager *wifiMgr) {
 }
 
 /**
-  Send an APRS packet and, eventuall, print it to serial line
+  Send an APRS packet and, eventually, print it to serial line
 
   @param *pkt the packet to send
 */
@@ -670,10 +663,12 @@ void aprsSendPosition(const char *comment = NULL) {
   strcat_P(aprsPkt, PSTR("!"));
   strcat_P(aprsPkt, aprsLocation);
   strcat_P(aprsPkt, PSTR("/A="));
-  char buf[10];
+  // Altitude buffer
+  char buf[10] = "";
   sprintf_P(buf, PSTR("%06d"), altFeet);
   strncat(aprsPkt, buf, sizeof(buf));
   strcat_P(aprsPkt, pstrSP);
+  // Comment
   if (comment != NULL)
     strcat(aprsPkt, comment);
   else {
