@@ -1224,12 +1224,13 @@ void loop() {
       if (light.getData(luxVis, luxIrd)) {
         // TODO Adapt the shutter if saturated
         if (light.getLux(lightGain, lightMS, luxVis, luxIrd, lux)) {
+          // Calculate the solar radiation in W/m^2 and publish
+          solRad = lround(lux * 0.0079);
           // Compose and publish the telemetry
           mqttPub(lround(lux), mqttTopicSns, "illuminance");
           mqttPub(luxVis,      mqttTopicSns, "visible");
           mqttPub(luxIrd,      mqttTopicSns, "infrared");
-          // Calculate the solar radiation in W/m^2
-          solRad = lround(lux * 0.0079);
+          mqttPub(solRad,      mqttTopicSns, "solar");
           // Limit the reading to a maximum value accepted by APRS
           if (solRad > 1999) solRad = 1999;
         }
