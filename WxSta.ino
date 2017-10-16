@@ -818,7 +818,7 @@ void aprsSendTelemetrySetup() {
 
   @param pres athmospheric pressure (QNH) in dPa
 */
-void aprsSendForecast(int pres) {
+int aprsSendForecast(int pres) {
   // Get the Zambretti code
   int zbCode = zbForecast(pres);
   // If valid, send the report
@@ -826,8 +826,12 @@ void aprsSendForecast(int pres) {
     // Need a larger buffer
     char buf[40] = "";
     strncpy_P(buf, zbFc[zbCode], sizeof(buf));
+    // Report to APRS
     aprsSendStatus(buf);
+    // Send to MQTT, too
+    mqttPubRet(buf, mqttTopicSns, "forecast");
   }
+  return zbCode;
 }
 
 /**
