@@ -19,7 +19,7 @@
   WxSta.  If not, see <http://www.gnu.org/licenses/>.
 
 
-  WiFi connected weather probe, made up from ESP82266-1 reading the athmospheric
+  WiFi connected weather probe, made up from ESP8266-1 reading the athmospheric
   sensor BME280 and the illuminance sensor TSL2561.  The probe publishes
   the measured data, along with various local telemetry, to CWOP and WU.
 
@@ -912,9 +912,9 @@ void aprsSendMessage(const char *dest, const char *title, const char *message) {
   strncat(aprsPkt, padCallSign, padSize);
   strcat_P(aprsPkt, pstrCL);
   // Message title
-  if (title != NULL) strncat(aprsPkt, title, 8);          // TODO Hardcoded max length
-  // The body of the message
-  strncat(aprsPkt, message, 80);                          // TODO Hardcoded max length
+  if (title != NULL) strncat(aprsPkt, title, 8);
+  // The body of the message, maximum size is 45, including the title
+  strncat(aprsPkt, message, 40);
   strcat_P(aprsPkt, eol);
   aprsSend(aprsPkt);
 }
