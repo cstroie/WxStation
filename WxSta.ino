@@ -64,7 +64,7 @@ const char nodename[] = "wxsta-dev";
 const char NODENAME[] = "WxSta";
 const char nodename[] = "wxsta";
 #endif
-const char VERSION[]  = "4.3.1";
+const char VERSION[]  = "4.3.2";
 bool       PROBE      = true;                   // True if the station is being probed
 const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
