@@ -887,6 +887,39 @@ int zbForecast(int zbCurrent) {
 }
 
 /**
+  Send an APRS message
+
+  @param dest the message destination, own call sign if empty
+  @param title the message title, if not empty
+  @param message the message body
+*/
+void aprsSendMessage(const char *dest, const char *title, const char *message) {
+  // The object's call sign has to be padded with spaces until 9 chars long
+  const int padSize = 9;
+  char padCallSign[padSize] = " ";
+  // Check if the destination is specified
+  if (dest == NULL) strcpy_P(padCallSign, aprsCallSign);  // Copy the own call sign from PROGMEM
+  else              strncpy(padCallSign, dest, padSize);  // Use the specified destination
+  // Pad with spaces, then make sure it ends with '\0'
+  for (int i = strlen(padCallSign); i < padSize; i++)
+    padCallSign[i] = ' ';
+  padCallSign[padSize] = '\0';
+  // Create the header of the packet
+  strcpy_P(aprsPkt, aprsCallSign);
+  strcat_P(aprsPkt, aprsPath);
+  strcat_P(aprsPkt, pstrCL);
+  // Message destination
+  strncat(aprsPkt, padCallSign, padSize);
+  strcat_P(aprsPkt, pstrCL);
+  // Message title
+  if (title != NULL) strncat(aprsPkt, title, 8);          // TODO Hardcoded max length
+  // The body of the message
+  strncat(aprsPkt, message, 80);                          // TODO Hardcoded max length
+  strcat_P(aprsPkt, eol);
+  aprsSend(aprsPkt);
+}
+
+/**
   Store previous athmospheric pressure values for each report in the last zbHours hours
 
   @param y current pressure value in dPa
@@ -1286,9 +1319,10 @@ void loop() {
     strcat(topic, nodename);
     // Uptime in seconds and text
     unsigned long ups = 0;
-    ups = uptime(text, sizeof(text));
-    mqttPubRet(ups,  topic, "uptime");
-    mqttPubRet(text, topic, "uptime", "text");
+    char upt[32] = "";
+    ups = uptime(upt, sizeof(text));
+    mqttPubRet(ups, topic, "uptime");
+    mqttPubRet(upt, topic, "uptime", "text");
     // Free heap
     mqttPubRet(heap, topic, "heap");
     // Power supply
@@ -1321,6 +1355,8 @@ void loop() {
                           aprsTlmBits);
         // Send the forecast, if we have one
         aprsSendForecast(rMedOut(MD_PRES));
+        // Send the uptime, as message
+        aprsSendMessage(NULL, "UPTM.", upt);
         //aprsSendStatus("Fine weather");
         // Close the connection
         aprsClient.stop();
