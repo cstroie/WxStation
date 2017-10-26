@@ -64,13 +64,16 @@ const char nodename[] = "wxsta-dev";
 const char NODENAME[] = "WxSta";
 const char nodename[] = "wxsta";
 #endif
-const char VERSION[]  = "4.3.2";
+const char VERSION[]  = "4.3.3";
 bool       PROBE      = true;                   // True if the station is being probed
 const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
 // OTA
 int otaProgress       = 0;
 int otaPort           = 8266;
+
+// Timed debug reports
+unsigned long dbgNext               = 0UL;                    // Next time to report
 
 // Time synchronization and time keeping
 const char    ntpServer[] PROGMEM   = "europe.pool.ntp.org";  // NTP server to connect to (RFC5905)
@@ -861,6 +864,10 @@ int zbForecast(int zbCurrent) {
     // Compute the pressure variation and last pressure (according to the equation)
     int pVar = lround(rgA * rgCnt);
     int pLst = lround(pVar + rgB);
+    // Report
+    char buf[32] = "";
+    snprintf_P(buf, 32, PSTR("PVar:%d, PLst:%d"), pVar, pLst);
+    aprsSendMessage(NULL, "ZBRT.", buf);
     // Get the trend
     if      (pVar >  zbBaroTrs) trend =  1;
     else if (pVar < -zbBaroTrs) trend = -1;
@@ -1356,8 +1363,13 @@ void loop() {
                           aprsTlmBits);
         // Send the forecast, if we have one
         aprsSendForecast(rMedOut(MD_PRES));
-        // Send the uptime, as message
-        aprsSendMessage(NULL, "UPTM.", upt);
+        // Hourly debug reports
+        if (millis() >= dbgNext) {
+          // Report again in one hour
+          dbgNext += 3600000UL;
+          // Send the uptime, as message
+          aprsSendMessage(NULL, "UPTM.", upt);
+        }
         //aprsSendStatus("Fine weather");
         // Close the connection
         aprsClient.stop();
