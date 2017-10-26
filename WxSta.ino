@@ -131,10 +131,10 @@ const char aprsCallSign[] PROGMEM = APRS_CALLSIGN;
 const char aprsPassCode[] PROGMEM = APRS_PASSCODE;
 const char aprsPath[]     PROGMEM = ">APRS,TCPIP*:";
 const char aprsLocation[] PROGMEM = APRS_LAT "/" APRS_LON "_";
-const char aprsTlmPARM[]  PROGMEM = ":PARM.Vcc,RSSI,Heap,IRed,Visb,PROBE,ATMO,LUX,SAT,VCC,HT,RB,TM";
-const char aprsTlmEQNS[]  PROGMEM = ":EQNS.0,0.004,2.5,0,-1,0,0,256,0,0,256,0,0,256,0";
-const char aprsTlmUNIT[]  PROGMEM = ":UNIT.V,dBm,Bytes,units,units,prb,on,on,sat,bad,ht,rb,er";
-const char aprsTlmBITS[]  PROGMEM = ":BITS.10011111, ";
+const char aprsTlmPARM[]  PROGMEM = "PARM.Vcc,RSSI,Heap,IRed,Visb,PROBE,ATMO,LUX,SAT,VCC,HT,RB,TM";
+const char aprsTlmEQNS[]  PROGMEM = "EQNS.0,0.004,2.5,0,-1,0,0,256,0,0,256,0,0,256,0";
+const char aprsTlmUNIT[]  PROGMEM = "UNIT.V,dBm,Bytes,units,units,prb,on,on,sat,bad,ht,rb,er";
+const char aprsTlmBITS[]  PROGMEM = "BITS.10011111, ";
 const char eol[]          PROGMEM = "\r\n";
 
 // Reports and measurements
@@ -782,6 +782,7 @@ void aprsSendTelemetrySetup() {
   strcat_P(aprsPkt, aprsPath);
   strcat_P(aprsPkt, pstrCL);
   strncat(aprsPkt, padCallSign, padSize);
+  strcat_P(aprsPkt, pstrCL);
   // At this point, keep the size of the packet header,
   // so we can trim the packet and append to it again
   int lenHeader = strlen(aprsPkt);
