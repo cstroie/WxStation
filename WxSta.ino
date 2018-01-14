@@ -1,7 +1,7 @@
 /**
   WxSta - Weather probe based on ESP8266-1, WiFi connected
 
-  Copyright 2017 Costin STROIE <costinstroie@eridu.eu.org>
+  Copyright 2017-2018 Costin STROIE <costinstroie@eridu.eu.org>
 
   This file is part of Weather Station.
 
@@ -20,14 +20,17 @@
 
 
   WiFi connected weather probe, made up from ESP8266-1 reading the athmospheric
-  sensor BME280 and the illuminance sensor TSL2561.  The probe publishes
-  the measured data, along with various local telemetry, to CWOP and WU.
+  sensor BME280 and the illuminance sensors TSL2561 or BH1750.  The probe
+  publishes the measured data, along with various local telemetry, to CWOP and WU.
 
   Use the board "Generic 8226 Module", flash size "1M (64K SPIFFS)".
 */
 
 // The DEBUG flag
 #define DEBUG
+
+// Select the light sensor
+//#define BHLIGHT
 
 // User settings
 #include "UserSettings.h"
@@ -39,7 +42,11 @@
 // Include the sensors libraries
 #include <Wire.h>
 #include <SparkFunBME280.h>
+#ifdef BHLIGHT
+#include <BH1750.h>
+#else
 #include <SparkFunTSL2561.h>
+#endif
 
 // WiFi
 #include <ESP8266WiFi.h>
@@ -64,7 +71,7 @@ const char nodename[] = "wxsta-dev";
 const char NODENAME[] = "WxSta";
 const char nodename[] = "wxsta";
 #endif
-const char VERSION[]  = "4.3.3";
+const char VERSION[]  = "4.4.0";
 bool       PROBE      = true;                   // True if the station is being probed
 const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
@@ -163,13 +170,19 @@ unsigned long       snsNextTime = 0UL;                                    // Nex
 const byte          atmoAddr    = 0x77;                                   // The athmospheric sensor I2C address
 BME280              atmo;                                                 // The athmospheric sensor
 bool                atmoOK      = false;                                  // The athmospheric sensor presence flag
+#ifdef BHLIGHT
+// BH1750
+const byte          lightAddr   = 0x23;                                   // The illuminance sensor I2C address
+BH1750              light(lightAddr);                                     // The illuminance sensor
+#else // BHLIGHT
 // TSL2561
 const byte          lightAddr   = 0x23;                                   // The illuminance sensor I2C address
 SFE_TSL2561         light;                                                // The illuminance sensor
-bool                lightOK     = false;                                  // The illuminance sensor presence flag
 boolean             lightGain   = false;                                  //    ~    ~    ~    ~    gain (true/false)
 unsigned char       lightSHTR   = 0;                                      //    ~    ~    ~    ~    shutter (0, 1, 2)
 unsigned int        lightMS;                                              //    ~    ~    ~    ~    integration timer
+#endif // BHLIGHT
+bool                lightOK     = false;                                  // The illuminance sensor presence flag
 
 // Set ADC to Voltage
 ADC_MODE(ADC_VCC);
@@ -1144,6 +1157,17 @@ void setup() {
   else        Serial.println(F("BME280  sensor missing"));
   yield();
 
+#ifdef BHLIGHT
+  // BH1750
+  Wire.beginTransmission(lightAddr);
+  lightOK = Wire.endTransmission() == 0;
+  if (lightOK) {
+    light.begin(BH1750_CONTINUOUS_HIGH_RES_MODE);
+    Serial.println(F("BH1750 sensor detected"));
+  }
+  else
+    Serial.println(F("BH1750 sensor missing"));
+#else
   // TSL2561
   light.begin();
   unsigned char ID;
@@ -1157,6 +1181,7 @@ void setup() {
     lightOK = false;
     Serial.println(F("TSL2561 sensor missing"));
   }
+#endif
   yield();
 
   // Hardware data
@@ -1234,11 +1259,11 @@ void loop() {
       rMedIn(MD_PRES, lround(slvl / 10));              // Store directly sea level in dPa
       rMedIn(MD_HMDT, lround(hmdt));                   // Humidity
       // Compose and publish the telemetry
-      mqttPub(lround(temp), mqttTopicSns, "temperature");
-      mqttPub(lround(hmdt), mqttTopicSns, "humidity");
-      mqttPub(lround(dewp), mqttTopicSns, "dewpoint");
-      mqttPub(lround(pres / 100), mqttTopicSns, "pressure");
-      mqttPub(lround(slvl / 100), mqttTopicSns, "sealevel");
+      mqttPubRet(lround(temp), mqttTopicSns, "temperature");
+      mqttPubRet(lround(hmdt), mqttTopicSns, "humidity");
+      mqttPubRet(lround(dewp), mqttTopicSns, "dewpoint");
+      mqttPubRet(lround(pres / 100), mqttTopicSns, "pressure");
+      mqttPubRet(lround(slvl / 100), mqttTopicSns, "sealevel");
     }
     else {
       // Store invalid values if no sensor
@@ -1251,6 +1276,10 @@ void loop() {
 
     // Check again whether the sensor is present
     if (!lightOK) {
+#ifdef BHLIGHT
+      Wire.beginTransmission(lightAddr);
+      lightOK = Wire.endTransmission() == 0;
+#else
       light.begin();
       unsigned char ID;
       if (light.getID(ID)) {
@@ -1258,11 +1287,29 @@ void loop() {
         light.setPowerUp();
         lightOK = true;
       }
+#endif
     }
-    // Read the light sensor TSL2561
+    // Read the light sensor
     if (lightOK) {
       // Set the bit 5 to show the sensor is present (reverse)
       aprsTlmBits |= B00100000;
+#ifdef BHLIGHT
+      // Read BH1750, illuminance value in lux
+      float lux = light.readLightLevel();
+      // Calculate the solar radiation in W/m^2
+      int solRad = lround(lux * 0.0079);
+      // Compose and publish the telemetry
+      mqttPubRet(lround(lux), mqttTopicSns, "illuminance");
+      mqttPubRet(solRad,      mqttTopicSns, "solar");
+      // Limit the reading to a maximum value accepted by APRS
+      if (solRad > 1999) solRad = 1999;
+      // Set the bit 4 to show the sensor is saturated
+      aprsTlmBits |= B00010000;
+      // Add to round median filter
+      rMedIn(MD_SRAD, solRad);
+      rMedIn(MD_VISI, 0);
+      rMedIn(MD_IRED, 0);
+#else
       unsigned int luxVis = 0, luxIrd = 0;
       double lux = -1;
       int solRad = -1;
@@ -1272,15 +1319,15 @@ void loop() {
           // Calculate the solar radiation in W/m^2 and publish
           solRad = lround(lux * 0.0079);
           // Compose and publish the telemetry
-          mqttPub(lround(lux), mqttTopicSns, "illuminance");
-          mqttPub(luxVis,      mqttTopicSns, "visible");
-          mqttPub(luxIrd,      mqttTopicSns, "infrared");
-          mqttPub(solRad,      mqttTopicSns, "solar");
+          mqttPubRet(lround(lux), mqttTopicSns, "illuminance");
+          mqttPubRet(luxVis,      mqttTopicSns, "visible");
+          mqttPubRet(luxIrd,      mqttTopicSns, "infrared");
+          mqttPubRet(solRad,      mqttTopicSns, "solar");
           // Limit the reading to a maximum value accepted by APRS
           if (solRad > 1999) solRad = 1999;
         }
         else {
-          // Sensor is aturated
+          // Sensor is saturated
           lux = -1;
           // Limit the reading to a maximum value
           if (solRad > 1999) solRad = 1999;
@@ -1298,6 +1345,7 @@ void loop() {
         rMedIn(MD_VISI, 0);
         rMedIn(MD_IRED, 0);
       }
+#endif
     }
     else {
       // Store invalid values if no sensor
