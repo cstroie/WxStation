@@ -30,7 +30,27 @@
 #define DEBUG
 
 // User settings
-#include "UserSettings.h"
+#include "config.h"
+
+/** config.h should contain
+
+// Development
+#define DEVEL
+
+// APRS
+#define APRS_CALLSIGN "NOCALL"
+#define APRS_PASSCODE "-1"
+#define APRS_LAT      "ddmm.mmN"
+#define APRS_LON      "dddmm.mmE"
+#define APRS_ALTITUDE m
+
+// Weather Underground
+#define WU_ID   "WU ID"
+#define WU_PASS "WU PASS"
+
+// Secure connections
+#define USE_SSL
+*/
 
 // The sensors are connected to I2C, here we map the pins
 #define SDA 0
@@ -43,7 +63,7 @@
 
 // WiFi
 #include <ESP8266WiFi.h>
-#ifdef SSL
+#ifdef USE_SSL
 #include <WiFiClientSecure.h>
 #else
 #include <WiFiClient.h>
@@ -64,7 +84,7 @@ const char nodename[] = "wxsta-dev";
 const char NODENAME[] = "WxSta";
 const char nodename[] = "wxsta";
 #endif
-const char VERSION[]  = "4.3.3";
+const char VERSION[]  = "4.3.4";
 bool       PROBE      = true;                   // True if the station is being probed
 const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
@@ -85,7 +105,7 @@ const int     ntpTZ                 = 0;                      // Time zone
 
 // Weather Underground parameters
 const char wuServer[]       = "weatherstation.wunderground.com";
-#ifdef SSL
+#ifdef USE_SSL
 const char wuPort           = 443;
 #else
 const char wuPort           = 80;
@@ -98,7 +118,7 @@ const char wuGET[] PROGMEM  = "GET /weatherstation/updateweatherstation.php?"
                               " HTTP/1.1";
 
 // MQTT parameters
-#ifdef SSL
+#ifdef USE_SSL
 WiFiClientSecure    wifiClient;                                 // Secure WiFi TCP client for MQTT
 #else
 WiFiClient          wifiClient;                                 // Plain WiFi TCP client for MQTT
@@ -110,7 +130,7 @@ const char          mqttId[]       = "wxsta-dev-eridu-eu-org";  // Development M
 const char          mqttId[]       = "wxsta-eridu-eu-org";      // Production MQTT client ID
 #endif
 const char          mqttServer[]   = "eridu.eu.org";            // MQTT server address to connect to
-#ifdef SSL
+#ifdef USE_SSL
 const int           mqttPort       = 8883;                      // Secure MQTT port
 #else
 const int           mqttPort       = 1883;                      // Plain MQTT port
@@ -995,7 +1015,7 @@ void wuUpdate(int temp, int dewp, int hmdt, int pres, int srad) {
     // Barometer in inHg
     int baro = lround(pres * 0.02953);
 
-#ifdef SSL
+#ifdef USE_SSL
     WiFiClientSecure wuClient;  // The HTTPS client
 #else
     WiFiClient       wuClient;  // The HTTP client
