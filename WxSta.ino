@@ -91,7 +91,7 @@ const char nodename[] = "wxsta-dev";
 const char NODENAME[] = "WxSta";
 const char nodename[] = "wxsta";
 #endif
-const char VERSION[]  = "4.4.1";
+const char VERSION[]  = "4.4.2";
 bool       PROBE      = true;                   // True if the station is being probed
 const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
@@ -113,9 +113,9 @@ const int     ntpTZ                 = 0;                      // Time zone
 // Weather Underground parameters
 const char wuServer[]       = "weatherstation.wunderground.com";
 #ifdef USE_SSL
-const char wuPort           = 443;
+const unsigned int wuPort   = 443;
 #else
-const char wuPort           = 80;
+const unsigned int wuPort   = 80;
 #endif
 const char wuGET[] PROGMEM  = "GET /weatherstation/updateweatherstation.php?"
                               "ID=" WU_ID "&PASSWORD=" WU_PASS "&dateutc=now"
@@ -1088,6 +1088,7 @@ void wuUpdate(int temp, int dewp, int hmdt, int pres, int srad) {
       // Get the response
       while (wuClient.connected()) {
         int rlen = wuClient.readBytesUntil('\r', buf, bufSize);
+        yield;
         buf[rlen] = '\0';
         Serial.print(buf);
       }
