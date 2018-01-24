@@ -23,7 +23,7 @@
   sensor BME280 and the illuminance sensors TSL2561 or BH1750.  The probe
   publishes the measured data, along with various local telemetry, to CWOP and WU.
 
-  Use the board "Generic 8226 Module", flash size "1M (64K SPIFFS)".
+  Use the board "Generic 8226 Module", flash size "1M (64K SPIFFS)", QIO.
 */
 
 // The DEBUG flag
@@ -37,22 +37,22 @@
 
 /** config.h should contain
 
-// Development
-#define DEVEL
+  // Development
+  #define DEVEL
 
-// APRS
-#define APRS_CALLSIGN "NOCALL"
-#define APRS_PASSCODE "-1"
-#define APRS_LAT      "ddmm.mmN"
-#define APRS_LON      "dddmm.mmE"
-#define APRS_ALTITUDE m
+  // APRS
+  #define APRS_CALLSIGN "NOCALL"
+  #define APRS_PASSCODE "-1"
+  #define APRS_LAT      "ddmm.mmN"
+  #define APRS_LON      "dddmm.mmE"
+  #define APRS_ALTITUDE m
 
-// Weather Underground
-#define WU_ID   "WU ID"
-#define WU_PASS "WU PASS"
+  // Weather Underground
+  #define WU_ID   "WU ID"
+  #define WU_PASS "WU PASS"
 
-// Secure connections
-#define USE_SSL
+  // Secure connections
+  #define USE_SSL
 */
 
 // The sensors are connected to I2C, here we map the pins
@@ -433,9 +433,34 @@ unsigned long uptime(char *buf, size_t len) {
 }
 
 /**
+  Try to connect to WiFi
+*/
+void wifiConnect(int timeout = 300) {
+  // Set the host name
+  WiFi.hostname(NODENAME);
+  // Try to connect to WiFi
+#ifdef WIFI_SSID
+  Serial.print(F("WiFi connecting "));
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  while (!WiFi.isConnected()) {
+    Serial.print(".");
+    delay(1000);
+  };
+  Serial.println(F(" done."));
+#else
+  WiFiManager wifiManager;
+  wifiManager.setTimeout(timeout);
+  wifiManager.setAPCallback(wifiCallback);
+  while (!wifiManager.autoConnect(NODENAME))
+    delay(1000);
+#endif
+}
+
+/**
   Display the WiFi parameters
 */
 void showWiFi() {
+  Serial.println();
   if (WiFi.isConnected()) {
     char ipbuf[16] = "";
     char gwbuf[16] = "";
@@ -447,24 +472,15 @@ void showWiFi() {
     charIP(WiFi.dnsIP(),     nsbuf, sizeof(nsbuf), true);
 
     // Print
-    Serial.println();
-    Serial.print(F("WiFi connected to "));
-    Serial.print(WiFi.SSID());
-    Serial.print(F(" on channel "));
-    Serial.print(WiFi.channel());
-    Serial.print(F(", RSSI "));
-    Serial.print(WiFi.RSSI());
-    Serial.println(F(" dBm."));
-    Serial.print(F(" IP : "));
-    Serial.println(ipbuf);
-    Serial.print(F(" GW : "));
-    Serial.println(gwbuf);
-    Serial.print(F(" DNS: "));
-    Serial.println(nsbuf);
+    Serial.print(F("WiFi connected to ")); Serial.print(WiFi.SSID());
+    Serial.print(F(" on channel "));       Serial.print(WiFi.channel());
+    Serial.print(F(", RSSI "));            Serial.print(WiFi.RSSI());    Serial.println(F(" dBm."));
+    Serial.print(F(" IP : "));             Serial.println(ipbuf);
+    Serial.print(F(" GW : "));             Serial.println(gwbuf);
+    Serial.print(F(" DNS: "));             Serial.println(nsbuf);
     Serial.println();
   }
   else {
-    Serial.println();
     Serial.print(F("WiFi not connected"));
   }
 }
@@ -1096,16 +1112,8 @@ void setup() {
   Serial.print(" ");
   Serial.println(__DATE__);
 
-  // Set the host name
-  WiFi.hostname(NODENAME);
-  // Try to connect to WiFi
-  WiFiManager wifiManager;
-  wifiManager.setTimeout(300);
-  wifiManager.setAPCallback(wifiCallback);
-  wifiManager.autoConnect(NODENAME);
-  while (!wifiManager.autoConnect(NODENAME))
-    delay(1000);
-
+  // Try to connect
+  wifiConnect();
   // Connected
   showWiFi();
 
@@ -1224,6 +1232,9 @@ void setup() {
   Main Arduino loop
 */
 void loop() {
+  // Make sure we are connected
+  if (!WiFi.isConnected()) wifiConnect(60);
+
   // Handle OTA
   ArduinoOTA.handle();
   yield();
