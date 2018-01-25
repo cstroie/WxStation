@@ -125,7 +125,7 @@ const char wuGET[] PROGMEM  = "GET /weatherstation/updateweatherstation.php?"
                               " HTTP/1.1";
 
 // MQTT parameters
-#ifdef USE_SSL
+#ifdef USE_MQTT_SSL
 WiFiClientSecure    wifiClient;                                 // Secure WiFi TCP client for MQTT
 #else
 WiFiClient          wifiClient;                                 // Plain WiFi TCP client for MQTT
@@ -137,7 +137,7 @@ const char          mqttId[]       = "wxsta-dev-eridu-eu-org";  // Development M
 const char          mqttId[]       = "wxsta-eridu-eu-org";      // Production MQTT client ID
 #endif
 const char          mqttServer[]   = "eridu.eu.org";            // MQTT server address to connect to
-#ifdef USE_SSL
+#ifdef USE_MQTT_SSL
 const int           mqttPort       = 8883;                      // Secure MQTT port
 #else
 const int           mqttPort       = 1883;                      // Plain MQTT port
