@@ -33,7 +33,7 @@
 //#define BHLIGHT
 
 // User settings
-#include "UserSettings.h"
+#include "config.h"
 
 // The sensors are connected to I2C, here we map the pins
 #define SDA 0
