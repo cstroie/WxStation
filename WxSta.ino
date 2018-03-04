@@ -91,7 +91,7 @@ const char nodename[] = "wxsta-dev";
 const char NODENAME[] = "WxSta";
 const char nodename[] = "wxsta";
 #endif
-const char VERSION[]  = "4.4.2";
+const char VERSION[]  = "4.4.3";
 bool       PROBE      = true;                   // True if the station is being probed
 const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
@@ -1233,9 +1233,6 @@ void setup() {
   Main Arduino loop
 */
 void loop() {
-  // Make sure we are connected
-  if (!WiFi.isConnected()) wifiConnect(60);
-
   // Handle OTA
   ArduinoOTA.handle();
   yield();
