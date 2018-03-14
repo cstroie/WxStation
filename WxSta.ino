@@ -209,7 +209,7 @@ ADC_MODE(ADC_VCC);
 
 // Zambretti forecaster (pressure in tenths of mB = decapascals dPa)
 int           zbBaroTop   = 10400;                  // Highest athmospheric pressure
-int           zbBaroBot   =  9800;                  // Lowest athmospheric pressure
+int           zbBaroBot   =  9700;                  // Lowest athmospheric pressure
 int           zbBaroTrs   =    10;                  // Pressure threshold
 const int     zbHours     = 3;                      // Need the last 3 hours for forecast
 int           zbDelay     = 3600UL * 1000UL;        // Report hourly
