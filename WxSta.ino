@@ -209,7 +209,7 @@ ADC_MODE(ADC_VCC);
 
 // Zambretti forecaster (pressure in tenths of mB = decapascals dPa)
 int           zbBaroTop   = 10400;                  // Highest athmospheric pressure
-int           zbBaroBot   =  9700;                  // Lowest athmospheric pressure
+int           zbBaroBot   =  9800;                  // Lowest athmospheric pressure
 int           zbBaroTrs   =    10;                  // Pressure threshold
 const int     zbHours     = 3;                      // Need the last 3 hours for forecast
 int           zbDelay     = 3600UL * 1000UL;        // Report hourly
@@ -1176,10 +1176,10 @@ void setup() {
   atmo.settings.I2CAddress = atmoAddr;
   atmo.settings.runMode = 3;
   atmo.settings.tStandby = 0;
-  atmo.settings.filter = 0;
-  atmo.settings.tempOverSample = 1;
-  atmo.settings.pressOverSample = 1;
-  atmo.settings.humidOverSample = 1;
+  atmo.settings.filter = 4;
+  atmo.settings.tempOverSample = 4;
+  atmo.settings.pressOverSample = 4;
+  atmo.settings.humidOverSample = 4;
   delay(10);
   atmoOK = atmo.begin() == 0x60;
   if (atmoOK) Serial.println(F("BME280  sensor detected"));
