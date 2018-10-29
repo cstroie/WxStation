@@ -1,29 +1,20 @@
 /**
   WxSta - Weather probe based on ESP8266-1, WiFi connected
 
-  Copyright 2017-2018 Costin STROIE <costinstroie@eridu.eu.org>
+  Copyright (c) 2017-2018 Costin STROIE <costinstroie@eridu.eu.org>
 
-  This file is part of Weather Station.
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, orl
+  (at your option) any later version.
 
-  WxSta is free software: you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by the Free
-  Software Foundation, either version 3 of the License, or (at your option) any
-  later version.
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
 
-  WxSta is distributed in the hope that it will be useful, but
-  WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
-  more details.
-
-  You should have received a copy of the GNU General Public License along with
-  WxSta.  If not, see <http://www.gnu.org/licenses/>.
-
-
-  WiFi connected weather probe, made up from ESP8266-1 reading the athmospheric
-  sensor BME280 and the illuminance sensors TSL2561 or BH1750.  The probe
-  publishes the measured data, along with various local telemetry, to CWOP and WU.
-
-  Use the board "Generic 8226 Module", flash size "1M (64K SPIFFS)", QIO.
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 // The DEBUG flag
@@ -53,6 +44,7 @@
 
   // Secure connections
   #define USE_SSL
+  #define USE_MQTT_SSL
 */
 
 // The sensors are connected to I2C, here we map the pins
@@ -61,7 +53,9 @@
 
 // Include the sensors libraries
 #include <Wire.h>
-#include <SparkFunBME280.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
+#include <Adafruit_BMP280.h>
 #ifdef BHLIGHT
 #include <BH1750.h>
 #else
@@ -91,7 +85,7 @@ const char nodename[] = "wxsta-dev";
 const char NODENAME[] = "WxSta";
 const char nodename[] = "wxsta";
 #endif
-const char VERSION[]  = "4.4.3";
+const char VERSION[]  = "4.5.1";
 bool       PROBE      = true;                   // True if the station is being probed
 const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
@@ -161,7 +155,7 @@ const char aprsCallSign[] PROGMEM = APRS_CALLSIGN;
 const char aprsPassCode[] PROGMEM = APRS_PASSCODE;
 const char aprsPath[]     PROGMEM = ">APRS,TCPIP*:";
 const char aprsLocation[] PROGMEM = APRS_LAT "/" APRS_LON "_";
-const char aprsTlmPARM[]  PROGMEM = "PARM.Vcc,RSSI,Heap,IRed,Visb,PROBE,ATMO,LUX,SAT,VCC,HT,RB,TM";
+const char aprsTlmPARM[]  PROGMEM = "PARM.Vcc,RSSI,Heap,IRed,Visb,ENVRN,BARO,LUX,SAT,VCC,HT,RB,TM";
 const char aprsTlmEQNS[]  PROGMEM = "EQNS.0,0.004,2.5,0,-1,0,0,256,0,0,256,0,0,256,0";
 const char aprsTlmUNIT[]  PROGMEM = "UNIT.V,dBm,Bytes,units,units,prb,on,on,sat,bad,ht,rb,er";
 const char aprsTlmBITS[]  PROGMEM = "BITS.10011111, ";
@@ -186,10 +180,17 @@ int       rMed[MD_ALL][4] = {0, -1, -1, -1};
 // Sensors
 const unsigned long snsDelay    = 3600000UL / aprsRprtHour / aprsMsrmMax; // Delay between sensor readings
 unsigned long       snsNextTime = 0UL;                                    // Next time to read the sensors
+
 // BME280
-const byte          atmoAddr    = 0x77;                                   // The athmospheric sensor I2C address
-BME280              atmo;                                                 // The athmospheric sensor
-bool                atmoOK      = false;                                  // The athmospheric sensor presence flag
+const byte          bmeAddr    = 0x77;                                    // The BME280 athmospheric sensor I2C address
+Adafruit_BME280     bme;                                                  // The BME280 athmospheric sensor
+bool                bmeOK      = false;                                   // The BME280 athmospheric sensor presence flag
+
+// BMP280
+const byte          bmpAddr    = 0x76;                                    // The BMP280 athmospheric sensor I2C address
+Adafruit_BMP280     bmp;                                                  // The BMP280 athmospheric sensor
+bool                bmpOK      = false;                                   // The BMP280 athmospheric sensor presence flag
+
 #ifdef BHLIGHT
 // BH1750
 const byte          lightAddr   = 0x23;                                   // The illuminance sensor I2C address
@@ -1172,19 +1173,15 @@ void setup() {
 #endif
 
   // BME280
-  atmo.settings.commInterface = I2C_MODE;
-  atmo.settings.I2CAddress = atmoAddr;
-  atmo.settings.runMode = 3;
-  atmo.settings.tStandby = 0;
-  atmo.settings.filter = 4;
-  atmo.settings.tempOverSample = 4;
-  atmo.settings.pressOverSample = 4;
-  atmo.settings.humidOverSample = 4;
-  delay(10);
-  atmoOK = atmo.begin() == 0x60;
-  if (atmoOK) Serial.println(F("BME280  sensor detected"));
-  else        Serial.println(F("BME280  sensor missing"));
+  bmeOK = bme.begin((uint8_t)bmeAddr);
+  if (bmeOK)  Serial.println(F("BME280 sensor detected"));
+  else        Serial.println(F("BME280 sensor missing"));
   yield();
+
+  // BMP280
+  bmpOK = bmp.begin((uint8_t)bmpAddr);
+  if (bmpOK)  Serial.println(F("BMP280 sensor detected"));
+  else        Serial.println(F("BMP280 sensor missing"));
 
 #ifdef BHLIGHT
   // BH1750
@@ -1253,9 +1250,6 @@ void loop() {
       aprsMsrmCount = aprsMsrmMax - 1;
     // Repeat sensor reading after the delay
     snsNextTime += snsDelay;
-    // Set the telemetry bit 7 if the station is being probed
-    if (PROBE) aprsTlmBits = B10000000;
-    else       aprsTlmBits = B00000000;
 
 #ifdef DEBUG
     Serial.print(F("Sensor reading "));
@@ -1268,36 +1262,51 @@ void loop() {
     // Set the telemetry bit 1 if the uptime is less than one day (recent reboot)
     if (millis() < 86400000UL) aprsTlmBits |= B00000010;
 
-    // Check again whether the sensor is present
-    if (!atmoOK) atmoOK = atmo.begin() == 0x60;
+    // Check again whether the BME280 sensor is present
+    if (!bmeOK) bmeOK = bme.begin((uint8_t)bmeAddr);
     // Read the athmospheric sensor BME280
-    if (atmoOK) {
-      // Set the bit 6 to show the sensor is present (reverse)
-      aprsTlmBits |= B01000000;
+    if (bmeOK) {
+      // Set the bit 7 to show the sensor is present (reverse)
+      aprsTlmBits |= B10000000;
       // Get the weather parameters
-      float temp = atmo.readTempC();
-      float pres = atmo.readFloatPressure();
-      float slvl = pres * altCorr;
-      float hmdt = atmo.readFloatHumidity();
+      float temp = bme.readTemperature();
+      float hmdt = bme.readHumidity();
       float dewp = 243.04 *
                    (log(hmdt / 100.0) + ((17.625 * temp) / (243.04 + temp))) /
                    (17.625 - log(hmdt / 100.0) - ((17.625 * temp) / (243.04 + temp)));
       // Add to the round median filter
       rMedIn(MD_TEMP, lround(temp * 9 / 5 + 32));      // Store directly integer Fahrenheit
       rMedIn(MD_DEWP, lround(dewp * 9 / 5 + 32));      // Store directly integer Fahrenheit
-      rMedIn(MD_PRES, lround(slvl / 10));              // Store directly sea level in dPa
       rMedIn(MD_HMDT, lround(hmdt));                   // Humidity
       // Compose and publish the telemetry
       mqttPubRet(lround(temp), mqttTopicSns, "temperature");
       mqttPubRet(lround(hmdt), mqttTopicSns, "humidity");
       mqttPubRet(lround(dewp), mqttTopicSns, "dewpoint");
-      mqttPubRet(lround(pres / 100), mqttTopicSns, "pressure");
-      mqttPubRet(lround(slvl / 100), mqttTopicSns, "sealevel");
     }
     else {
       // Store invalid values if no sensor
       rMedIn(MD_TEMP, -500);
       rMedIn(MD_DEWP, -500);
+    }
+    yield();
+
+    // Check again whether the BMP280 sensor is present
+    if (!bmpOK) bmpOK = bmp.begin((uint8_t)bmpAddr);
+    // Read the athmospheric sensor BMP280
+    if (bmpOK) {
+      // Set the bit 6 to show the sensor is present (reverse)
+      aprsTlmBits |= B01000000;
+      // Get the weather parameters
+      float pres = bme.readPressure();
+      float slvl = pres * altCorr;
+      // Add to the round median filter
+      rMedIn(MD_PRES, lround(slvl / 10));              // Store directly sea level in dPa
+      // Compose and publish the telemetry
+      mqttPubRet(lround(pres / 100), mqttTopicSns, "pressure");
+      mqttPubRet(lround(slvl / 100), mqttTopicSns, "sealevel");
+    }
+    else {
+      // Store invalid values if no sensor
       rMedIn(MD_PRES, -1);
       rMedIn(MD_HMDT, -1);
     }
