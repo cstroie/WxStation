@@ -85,7 +85,7 @@ const char nodename[] = "wxsta-dev";
 const char NODENAME[] = "WxSta";
 const char nodename[] = "wxsta";
 #endif
-const char VERSION[]  = "4.5.1";
+const char VERSION[]  = "4.5.2";
 bool       PROBE      = true;                   // True if the station is being probed
 const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
@@ -295,7 +295,6 @@ int rMedOut(int idx) {
 
 /**
   Simple median filter: add value to array
-
   @param idx the index in round median array
   @param x the value to add
 */
