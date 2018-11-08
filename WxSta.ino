@@ -1297,7 +1297,7 @@ void loop() {
       // Set the bit 6 to show the sensor is present (reverse)
       aprsTlmBits |= B01000000;
       // Get the weather parameters
-      float pres = bme.readPressure();
+      float pres = bmp.readPressure();
       float slvl = pres * altCorr;
       // Add to the round median filter
       rMedIn(MD_PRES, lround(slvl / 10));              // Store directly sea level in dPa
