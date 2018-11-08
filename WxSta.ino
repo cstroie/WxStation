@@ -158,7 +158,7 @@ const char aprsLocation[] PROGMEM = APRS_LAT "/" APRS_LON "_";
 const char aprsTlmPARM[]  PROGMEM = "PARM.Vcc,RSSI,Heap,IRed,Visb,ENVRN,BARO,LUX,SAT,VCC,HT,RB,TM";
 const char aprsTlmEQNS[]  PROGMEM = "EQNS.0,0.004,2.5,0,-1,0,0,256,0,0,256,0,0,256,0";
 const char aprsTlmUNIT[]  PROGMEM = "UNIT.V,dBm,Bytes,units,units,prb,on,on,sat,bad,ht,rb,er";
-const char aprsTlmBITS[]  PROGMEM = "BITS.10011111, ";
+const char aprsTlmBITS[]  PROGMEM = "BITS.00011111, ";
 const char eol[]          PROGMEM = "\r\n";
 
 // Reports and measurements
