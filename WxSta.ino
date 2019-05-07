@@ -1413,7 +1413,7 @@ void loop() {
     // Uptime in seconds and text
     unsigned long ups = 0;
     char upt[32] = "";
-    ups = uptime(upt, sizeof(text));
+    ups = uptime(upt, sizeof(upt));
     mqttPubRet(ups, topic, "uptime");
     mqttPubRet(upt, topic, "uptime", "text");
     // Free heap
