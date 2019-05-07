@@ -45,6 +45,13 @@
   // Secure connections
   #define USE_SSL
   #define USE_MQTT_SSL
+
+  // MQTT
+  #define MQTT_SERVER   "mqtt.server.exmaple"
+  #define MQTT_ID       "your-mqtt-id"
+
+  // NTP
+  #define NTP_SERVER    "pool.ntp.org"
 */
 
 // The sensors are connected to I2C, here we map the pins
@@ -85,7 +92,7 @@ const char nodename[] = "wxsta-dev";
 const char NODENAME[] = "WxSta";
 const char nodename[] = "wxsta";
 #endif
-const char VERSION[]  = "4.5.2";
+const char VERSION[]  = "4.5.3";
 bool       PROBE      = true;                   // True if the station is being probed
 const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
@@ -97,7 +104,7 @@ int otaPort           = 8266;
 unsigned long dbgNext               = 0UL;                    // Next time to report
 
 // Time synchronization and time keeping
-const char    ntpServer[] PROGMEM   = "europe.pool.ntp.org";  // NTP server to connect to (RFC5905)
+const char    ntpServer[] PROGMEM   = NTP_SERVER;             // NTP server to connect to (RFC5905)
 const int     ntpPort               = 123;                    // NTP port
 unsigned long ntpNextSync           = 0UL;                    // Next time to syncronize
 unsigned long ntpDelta              = 0UL;                    // Difference between real time and internal clock
@@ -126,11 +133,11 @@ WiFiClient          wifiClient;                                 // Plain WiFi TC
 #endif
 PubSubClient        mqttClient(wifiClient);                     // MQTT client, based on WiFi client
 #ifdef DEVEL
-const char          mqttId[]       = "wxsta-dev-eridu-eu-org";  // Development MQTT client ID
+const char          mqttId[]       = MQTT_ID "-dev";            // Development MQTT client ID
 #else
-const char          mqttId[]       = "wxsta-eridu-eu-org";      // Production MQTT client ID
+const char          mqttId[]       = MQTT_ID;                   // Production MQTT client ID
 #endif
-const char          mqttServer[]   = "eridu.eu.org";            // MQTT server address to connect to
+const char          mqttServer[]   = MQTT_SERVER;               // MQTT server address to connect to
 #ifdef USE_MQTT_SSL
 const int           mqttPort       = 8883;                      // Secure MQTT port
 #else
@@ -1261,33 +1268,8 @@ void loop() {
     // Set the telemetry bit 1 if the uptime is less than one day (recent reboot)
     if (millis() < 86400000UL) aprsTlmBits |= B00000010;
 
-    // Check again whether the BME280 sensor is present
-    if (!bmeOK) bmeOK = bme.begin((uint8_t)bmeAddr);
-    // Read the athmospheric sensor BME280
-    if (bmeOK) {
-      // Set the bit 7 to show the sensor is present (reverse)
-      aprsTlmBits |= B10000000;
-      // Get the weather parameters
-      float temp = bme.readTemperature();
-      float hmdt = bme.readHumidity();
-      float dewp = 243.04 *
-                   (log(hmdt / 100.0) + ((17.625 * temp) / (243.04 + temp))) /
-                   (17.625 - log(hmdt / 100.0) - ((17.625 * temp) / (243.04 + temp)));
-      // Add to the round median filter
-      rMedIn(MD_TEMP, lround(temp * 9 / 5 + 32));      // Store directly integer Fahrenheit
-      rMedIn(MD_DEWP, lround(dewp * 9 / 5 + 32));      // Store directly integer Fahrenheit
-      rMedIn(MD_HMDT, lround(hmdt));                   // Humidity
-      // Compose and publish the telemetry
-      mqttPubRet(lround(temp), mqttTopicSns, "temperature");
-      mqttPubRet(lround(hmdt), mqttTopicSns, "humidity");
-      mqttPubRet(lround(dewp), mqttTopicSns, "dewpoint");
-    }
-    else {
-      // Store invalid values if no sensor
-      rMedIn(MD_TEMP, -500);
-      rMedIn(MD_DEWP, -500);
-    }
-    yield();
+    // Need to keep the temperature readings between sensors
+    float temp;
 
     // Check again whether the BMP280 sensor is present
     if (!bmpOK) bmpOK = bmp.begin((uint8_t)bmpAddr);
@@ -1296,17 +1278,45 @@ void loop() {
       // Set the bit 6 to show the sensor is present (reverse)
       aprsTlmBits |= B01000000;
       // Get the weather parameters
+      temp = bmp.readTemperature();
       float pres = bmp.readPressure();
       float slvl = pres * altCorr;
       // Add to the round median filter
+      rMedIn(MD_TEMP, lround(temp * 9 / 5 + 32));      // Store directly integer Fahrenheit
       rMedIn(MD_PRES, lround(slvl / 10));              // Store directly sea level in dPa
       // Compose and publish the telemetry
+      mqttPubRet(lround(temp), mqttTopicSns, "temperature");
       mqttPubRet(lround(pres / 100), mqttTopicSns, "pressure");
       mqttPubRet(lround(slvl / 100), mqttTopicSns, "sealevel");
     }
     else {
       // Store invalid values if no sensor
+      rMedIn(MD_TEMP, -500);
       rMedIn(MD_PRES, -1);
+    }
+    yield();
+
+    // Check again whether the BME280 sensor is present
+    if (!bmeOK) bmeOK = bme.begin((uint8_t)bmeAddr);
+    // Read the athmospheric sensor BME280
+    if (bmeOK) {
+      // Set the bit 7 to show the sensor is present (reverse)
+      aprsTlmBits |= B10000000;
+      // Get the weather parameters
+      float hmdt = bme.readHumidity();
+      float dewp = 243.04 *
+                   (log(hmdt / 100.0) + ((17.625 * temp) / (243.04 + temp))) /
+                   (17.625 - log(hmdt / 100.0) - ((17.625 * temp) / (243.04 + temp)));
+      // Add to the round median filter
+      rMedIn(MD_DEWP, lround(dewp * 9 / 5 + 32));      // Store directly integer Fahrenheit
+      rMedIn(MD_HMDT, lround(hmdt));                   // Humidity
+      // Compose and publish the telemetry
+      mqttPubRet(lround(hmdt), mqttTopicSns, "humidity");
+      mqttPubRet(lround(dewp), mqttTopicSns, "dewpoint");
+    }
+    else {
+      // Store invalid values if no sensor
+      rMedIn(MD_DEWP, -500);
       rMedIn(MD_HMDT, -1);
     }
     yield();
