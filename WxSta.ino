@@ -1,7 +1,7 @@
 /**
   WxSta - Weather probe based on ESP8266-1, WiFi connected
 
-  Copyright (c) 2017-2018 Costin STROIE <costinstroie@eridu.eu.org>
+  Copyright (c) 2017-2021 Costin STROIE <costinstroie@eridu.eu.org>
 
   This program is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -62,7 +62,6 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
-#include <Adafruit_BMP280.h>
 #ifdef BHLIGHT
 #include <BH1750.h>
 #else
@@ -92,7 +91,7 @@ const char nodename[] = "wxsta-dev";
 const char NODENAME[] = "WxSta";
 const char nodename[] = "wxsta";
 #endif
-const char VERSION[]  = "4.5.3";
+const char VERSION[]  = "4.5.5";
 bool       PROBE      = true;                   // True if the station is being probed
 const char DEVICEID[] = "tAEW4";                // t_hing A_rduino E_SP8266 W_iFi 4_
 
@@ -154,7 +153,7 @@ const char          mqttTopicRpt[] = "report";
 WiFiClient  aprsClient;                                                                     // WiFi TCP client for APRS
 const char  aprsServer[]  = "cwop5.aprs.net";                                               // CWOP APRS-IS server address to connect to
 const int   aprsPort      = 14580;                                                          // CWOP APRS-IS port
-const int   altMeters     = APRS_ALTITUDE;                                                  // Altitude in Bucharest
+const int   altMeters     = APRS_ALTITUDE;                                                  // Altitude in meters
 const long  altFeet       = (long)(altMeters * 3.28084);                                    // Altitude in feet
 const float altCorr       = pow((float)(1.0 - 2.25577e-5 * altMeters), (float)(-5.25578));  // Altitude correction for QNH
 
@@ -164,13 +163,13 @@ const char aprsPath[]     PROGMEM = ">APRS,TCPIP*:";
 const char aprsLocation[] PROGMEM = APRS_LAT "/" APRS_LON "_";
 const char aprsTlmPARM[]  PROGMEM = "PARM.Vcc,RSSI,Heap,IRed,Visb,ENVRN,BARO,LUX,SAT,VCC,HT,RB,TM";
 const char aprsTlmEQNS[]  PROGMEM = "EQNS.0,0.004,2.5,0,-1,0,0,256,0,0,256,0,0,256,0";
-const char aprsTlmUNIT[]  PROGMEM = "UNIT.V,dBm,Bytes,units,units,prb,on,on,sat,bad,ht,rb,er";
-const char aprsTlmBITS[]  PROGMEM = "BITS.00011111, ";
+const char aprsTlmUNIT[]  PROGMEM = "UNIT.V,dBm,Bytes,units,units,off,off,off,sat,bad,ht,rb,er";
+const char aprsTlmBITS[]  PROGMEM = "BITS.11111111, ";
 const char eol[]          PROGMEM = "\r\n";
 
 // Reports and measurements
 const int aprsRprtHour   = 12; // Number of APRS reports per hour
-const int aprsMsrmMax    = 5;  // Number of measurements per report (keep even)
+const int aprsMsrmMax    = 5;  // Number of measurements per report
 int       aprsMsrmCount  = 1;  // Measurements counter (force one initial report)
 int       aprsTlmSeq     = 0;  // Telemetry sequence mumber
 
@@ -189,14 +188,9 @@ const unsigned long snsDelay    = 3600000UL / aprsRprtHour / aprsMsrmMax; // Del
 unsigned long       snsNextTime = 0UL;                                    // Next time to read the sensors
 
 // BME280
-const byte          bmeAddr    = 0x77;                                    // The BME280 athmospheric sensor I2C address
+const byte          bmeAddr    = 0x76;                                    // The BME280 athmospheric sensor I2C address
 Adafruit_BME280     bme;                                                  // The BME280 athmospheric sensor
 bool                bmeOK      = false;                                   // The BME280 athmospheric sensor presence flag
-
-// BMP280
-const byte          bmpAddr    = 0x76;                                    // The BMP280 athmospheric sensor I2C address
-Adafruit_BMP280     bmp;                                                  // The BMP280 athmospheric sensor
-bool                bmpOK      = false;                                   // The BMP280 athmospheric sensor presence flag
 
 #ifdef BHLIGHT
 // BH1750
@@ -445,6 +439,8 @@ unsigned long uptime(char *buf, size_t len) {
 void wifiConnect(int timeout = 300) {
   // Set the host name
   WiFi.hostname(NODENAME);
+  // Set the mode
+  WiFi.mode(WIFI_STA);
   // Try to connect to WiFi
 #ifdef WIFI_SSID
   Serial.print(F("WiFi connecting "));
@@ -817,7 +813,10 @@ void aprsSendTelemetry(int p1, int p2, int p3, int p4, int p5, byte bits) {
   strcat_P(aprsPkt, aprsPath);
   snprintf_P(buf, bufSize, PSTR("T#%03d,%03d,%03d,%03d,%03d,%03d,"), aprsTlmSeq, p1, p2, p3, p4, p5);
   strncat(aprsPkt, buf, bufSize);
-  itoa(bits, buf, 2);
+  uint8_t i = 0, b = 8;
+  while (b--)
+    buf[i++] = bitRead(bits, b) + '0';
+  buf[i] = '\0';
   strncat(aprsPkt, buf, bufSize);
   strcat_P(aprsPkt, eol);
   aprsSend(aprsPkt);
@@ -1184,11 +1183,6 @@ void setup() {
   else        Serial.println(F("BME280 sensor missing"));
   yield();
 
-  // BMP280
-  bmpOK = bmp.begin((uint8_t)bmpAddr);
-  if (bmpOK)  Serial.println(F("BMP280 sensor detected"));
-  else        Serial.println(F("BMP280 sensor missing"));
-
 #ifdef BHLIGHT
   // BH1750
   Wire.beginTransmission(lightAddr);
@@ -1264,60 +1258,48 @@ void loop() {
 
     // Check the time and set the telemetry bit 0 if time is not accurate
     unsigned long utm = timeUNIX();
-    if (!ntpOk) aprsTlmBits |= B00000001;
+    if (!ntpOk) bitSet(aprsTlmBits, 0);
+    else        bitClear(aprsTlmBits, 0);
     // Set the telemetry bit 1 if the uptime is less than one day (recent reboot)
-    if (millis() < 86400000UL) aprsTlmBits |= B00000010;
-
-    // Need to keep the temperature readings between sensors
-    float temp;
-
-    // Check again whether the BMP280 sensor is present
-    if (!bmpOK) bmpOK = bmp.begin((uint8_t)bmpAddr);
-    // Read the athmospheric sensor BMP280
-    if (bmpOK) {
-      // Set the bit 6 to show the sensor is present (reverse)
-      aprsTlmBits |= B01000000;
-      // Get the weather parameters
-      temp = bmp.readTemperature();
-      float pres = bmp.readPressure();
-      float slvl = pres * altCorr;
-      // Add to the round median filter
-      rMedIn(MD_TEMP, lround(temp * 9 / 5 + 32));      // Store directly integer Fahrenheit
-      rMedIn(MD_PRES, lround(slvl / 10));              // Store directly sea level in dPa
-      // Compose and publish the telemetry
-      mqttPubRet(lround(temp), mqttTopicSns, "temperature");
-      mqttPubRet(lround(pres / 100), mqttTopicSns, "pressure");
-      mqttPubRet(lround(slvl / 100), mqttTopicSns, "sealevel");
-    }
-    else {
-      // Store invalid values if no sensor
-      rMedIn(MD_TEMP, -500);
-      rMedIn(MD_PRES, -1);
-    }
+    if (millis() < 86400000UL)  bitSet(aprsTlmBits, 1);
+    else                        bitClear(aprsTlmBits, 1);
     yield();
 
     // Check again whether the BME280 sensor is present
     if (!bmeOK) bmeOK = bme.begin((uint8_t)bmeAddr);
     // Read the athmospheric sensor BME280
     if (bmeOK) {
-      // Set the bit 7 to show the sensor is present (reverse)
-      aprsTlmBits |= B10000000;
+      // Clear bit 7 to show the sensor is present
+      bitClear(aprsTlmBits, 7);
       // Get the weather parameters
+      float temp = bme.readTemperature();
       float hmdt = bme.readHumidity();
       float dewp = 243.04 *
                    (log(hmdt / 100.0) + ((17.625 * temp) / (243.04 + temp))) /
                    (17.625 - log(hmdt / 100.0) - ((17.625 * temp) / (243.04 + temp)));
-      // Add to the round median filter
-      rMedIn(MD_DEWP, lround(dewp * 9 / 5 + 32));      // Store directly integer Fahrenheit
-      rMedIn(MD_HMDT, lround(hmdt));                   // Humidity
+      float pres = bme.readPressure();
+      float slvl = pres * altCorr;
+      // Store directly integer Fahrenheit
+      rMedIn(MD_TEMP, lround(temp * 9 / 5 + 32));
+      rMedIn(MD_DEWP, lround(dewp * 9 / 5 + 32));
+      rMedIn(MD_HMDT, lround(hmdt));
+      // Store directly sea level in dPa
+      rMedIn(MD_PRES, lround(slvl / 10));
       // Compose and publish the telemetry
+      mqttPubRet(lround(temp), mqttTopicSns, "temperature");
       mqttPubRet(lround(hmdt), mqttTopicSns, "humidity");
       mqttPubRet(lround(dewp), mqttTopicSns, "dewpoint");
+      mqttPubRet(lround(pres / 100), mqttTopicSns, "pressure");
+      mqttPubRet(lround(slvl / 100), mqttTopicSns, "sealevel");
     }
     else {
+      // Set the bit 7 to show the sensor is absent
+      bitSet(aprsTlmBits, 7);
       // Store invalid values if no sensor
+      rMedIn(MD_TEMP, -500);
       rMedIn(MD_DEWP, -500);
       rMedIn(MD_HMDT, -1);
+      rMedIn(MD_PRES, -1);
     }
     yield();
 
@@ -1338,8 +1320,8 @@ void loop() {
     }
     // Read the light sensor
     if (lightOK) {
-      // Set the bit 5 to show the sensor is present (reverse)
-      aprsTlmBits |= B00100000;
+      // Clear bit 5 to show the sensor is present
+      bitClear(aprsTlmBits, 5);
 #ifdef BHLIGHT
       // Read BH1750, illuminance value in lux
       float lux = light.readLightLevel();
@@ -1349,9 +1331,14 @@ void loop() {
       mqttPubRet(lround(lux), mqttTopicSns, "illuminance");
       mqttPubRet(solRad,      mqttTopicSns, "solar");
       // Limit the reading to a maximum value accepted by APRS
-      if (solRad > 1999) solRad = 1999;
-      // Set the bit 4 to show the sensor is saturated
-      aprsTlmBits |= B00010000;
+      if (solRad > 1999) {
+        solRad = 1999;
+        // Set bit 4 to show the sensor is saturated
+        bitSet(aprsTlmBits, 4);
+      }
+      else
+        // Clear bit 4 to show the sensor is not saturated
+        bitClear(aprsTlmBits, 4);
       // Add to round median filter
       rMedIn(MD_SRAD, solRad);
       rMedIn(MD_VISI, 0);
@@ -1395,6 +1382,8 @@ void loop() {
 #endif
     }
     else {
+      // Set bit 5 if sensor is absent
+      bitSet(aprsTlmBits, 5);
       // Store invalid values if no sensor
       rMedIn(MD_SRAD, -1);
       rMedIn(MD_VISI, 0);
@@ -1409,7 +1398,8 @@ void loop() {
     int vcc  = ESP.getVcc();
     rMedIn(MD_VCC, vcc);
     // Set the bit 3 to show whether the battery is wrong (3.3V +/- 10%)
-    if (vcc < 3000 or vcc > 3600) aprsTlmBits |= B00001000;
+    if (vcc < 3000 or vcc > 3600) bitSet(aprsTlmBits, 3);
+    else                          bitClear(aprsTlmBits, 3);
     // Get RSSI
     int rssi = WiFi.RSSI();
     rMedIn(MD_RSSI, rssi);
@@ -1448,8 +1438,9 @@ void loop() {
                         rMedOut(MD_HMDT),
                         rMedOut(MD_PRES),
                         rMedOut(MD_SRAD));
+        // Send the telemetry setup if uptime is less than one minute
+        if (ups < 60) aprsSendTelemetrySetup();
         // Send the telemetry
-        //aprsSendTelemetrySetup();
         aprsSendTelemetry((rMedOut(MD_VCC) - 2500) >> 2,
                           -rMedOut(MD_RSSI),
                           rMedOut(MD_HEAP) >> 8,
